@@ -1,4 +1,5 @@
 using System.IO;
+using FlowRing.DesktopHost.UI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Web.WebView2.Core;
@@ -6,16 +7,17 @@ using Microsoft.Web.WebView2.Core;
 namespace FlowRing.DesktopHost.Host;
 
 /// <summary>
-/// WebView2 宿主真实实现：CoreWebView2Environment 创建 + 加载 packages/web/dist/index.html + WebMessage 接收。
-/// MVP 阶段只创建 Environment；待 Phase 5 起把 WebView2 控件（WinForms / WPF 二选一）实例化。
+/// WebView2 宿主：创建 Environment + 实例化 MainWindow + 暴露 NavigateTo。
 /// </summary>
 public sealed class WebView2Host : IDisposable
 {
     private readonly HostController _controller;
     private readonly ILogger<WebView2Host> _logger;
     private CoreWebView2Environment? _environment;
+    private MainWindow? _mainWindow;
 
     public bool IsInitialized { get; private set; }
+    public MainWindow? MainWindow => _mainWindow;
 
     public WebView2Host(HostController controller, ILoggerFactory? loggerFactory = null)
     {
@@ -25,45 +27,72 @@ public sealed class WebView2Host : IDisposable
 
     public async Task InitializeAsync(CancellationToken ct)
     {
-        if (IsInitialized)
-        {
-            return;
-        }
+        if (IsInitialized) return;
 
+        // 1. 创建 WebView2 user data 目录
         var webView2Dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "FlowRing",
             "WebView2");
         Directory.CreateDirectory(webView2Dir);
 
+        // 2. 创建 Environment（失败则走暂停路径）
         try
         {
             _environment = await CoreWebView2Environment.CreateAsync(webView2Dir);
-            IsInitialized = true;
-            _logger.LogInformation("WebView2Environment 初始化完成（user data: {Dir}）", webView2Dir);
+            _logger.LogInformation("WebView2Environment 创建完成（user data: {Dir}）", webView2Dir);
         }
         catch (Exception ex) when (IsMissingRuntime(ex))
         {
-            _logger.LogWarning(ex, "WebView2 Runtime 缺失，引导用户下载安装");
+            _logger.LogWarning(ex, "WebView2 Runtime 缺失，进入暂停态，提示用户下载安装");
             _controller.SetPaused(true);
             return;
         }
 
-        // 触发 WebView2 创建（Phase 5 起当 UI 真正需要显示窗口时创建 window + WebView2）
-        // MVP 占位：仅把初始化信息记录下来，不创建真实 WebView2 UI。
-        _logger.LogInformation("WebView2 已就绪（待 Phase 5 创建窗口时实例化 WebView2 控件）");
+        // 3. 解析前端 dist 路径
+        var frontendDistPath = ResolveFrontendDistPath();
+        _logger.LogInformation("前端 dist 路径：{Path}", frontendDistPath);
+
+        // 4. 实例化 MainWindow（不 Show，等用户点菜单再 Show）
+        _mainWindow = new MainWindow(_controller);
+        try
+        {
+            await _mainWindow.InitializeAsync(frontendDistPath, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MainWindow 初始化失败");
+        }
+
+        IsInitialized = true;
+        _logger.LogInformation("WebView2Host + MainWindow 初始化链路完成");
     }
 
-    public async void NavigateTo(string route)
+    public void NavigateTo(string route)
     {
-        if (_environment is null)
+        if (_mainWindow is null)
         {
-            _logger.LogWarning("WebView2 未就绪，跳转请求被忽略：{Route}", route);
+            _logger.LogWarning("MainWindow 未初始化，跳转请求被忽略：{Route}", route);
             return;
         }
-        // MVP：仅记录日志；Phase 5 起 WebView2 控件加载完成后调 NavigateTo。
-        await Task.Yield();
-        _logger.LogInformation("WebView2 收到跳转请求：{Route}", route);
+        _mainWindow.NavigateToRoute(route);
+    }
+
+    private static string ResolveFrontendDistPath()
+    {
+        // 优先按 cwd 向上找（dotnet run 时）
+        var cwd = Directory.GetCurrentDirectory();
+        var byCwd = Path.GetFullPath(Path.Combine(cwd, "packages", "web", "dist"));
+        if (Directory.Exists(byCwd))
+        {
+            return byCwd;
+        }
+
+        // 否则按 BaseDirectory 向上找（dotnet publish 后）
+        var baseDir = AppContext.BaseDirectory;
+        var byBase = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..",
+            "packages", "web", "dist"));
+        return byBase;
     }
 
     private static bool IsMissingRuntime(Exception ex)
@@ -77,6 +106,8 @@ public sealed class WebView2Host : IDisposable
 
     public void Dispose()
     {
+        _mainWindow?.Dispose();
+        _mainWindow = null;
         _environment = null;
         IsInitialized = false;
     }
