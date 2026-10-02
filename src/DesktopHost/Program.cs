@@ -1,10 +1,8 @@
 using FlowRing.DesktopHost.Host;
+using Microsoft.Extensions.Logging;
 
 namespace FlowRing.DesktopHost;
 
-/// <summary>
-/// DesktopHost 入口。MVP 仅初始化系统托盘 + WebView2 + Bridge Pipe。
-/// </summary>
 internal static class Program
 {
     [STAThread]
@@ -13,7 +11,16 @@ internal static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.SetCompatibleTextRenderingDefault(false);
 
-        var controller = new HostController();
+        // 用 ConsoleLoggerProvider 让日志输出到 stdout
+        using var loggerFactory = LoggerFactory.Create(builder =>
+            builder.AddSimpleConsole(opts =>
+            {
+                opts.SingleLine = true;
+                opts.TimestampFormat = "HH:mm:ss ";
+            })
+            .SetMinimumLevel(LogLevel.Information));
+
+        var controller = new HostController(loggerFactory);
         using var cts = new CancellationTokenSource();
         Application.ApplicationExit += (_, _) => cts.Cancel();
 

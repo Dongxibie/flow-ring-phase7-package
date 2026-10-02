@@ -15,7 +15,7 @@ public sealed class MainWindow : Form
     private readonly HostController _controller;
     private readonly ILogger<MainWindow> _logger;
     private readonly WebView2 _webView = new();
-    private bool _isReady;
+    private volatile bool _isReady;
 
     public MainWindow(HostController controller, ILoggerFactory? loggerFactory = null)
     {
@@ -45,6 +45,23 @@ public sealed class MainWindow : Form
             }
         };
 
+        // 关键修复：注册 CoreWebView2 初始化完成回调，在异步初始化完成后才设 _isReady
+        _webView.CoreWebView2InitializationCompleted += (_, e) =>
+        {
+            if (e.IsSuccess)
+            {
+                _isReady = true;
+                _logger.LogInformation("CoreWebView2 初始化完成");
+            }
+            else
+            {
+                _isReady = false;
+                _logger.LogError(e.InitializationException, "CoreWebView2 初始化失败");
+                // 即使失败也 Show 窗口，让用户看到错误状态
+                if (!Visible) Show();
+            }
+        };
+
         Load += (_, _) =>
         {
             _logger.LogInformation("MainWindow Load 完成，host 启动链路全部就绪");
@@ -71,24 +88,38 @@ public sealed class MainWindow : Form
         if (!File.Exists(indexPath))
         {
             _logger.LogWarning("前端 dist 缺失：{Path}，请先跑 pnpm --filter web build", indexPath);
-            _isReady = false;
+            // 不抛异常，让主窗口能打开但页面空白
             return;
         }
 
         var fileUri = new Uri(indexPath).AbsoluteUri;
-        _webView.CoreWebView2.Navigate(fileUri);
-        _isReady = true;
-        _logger.LogInformation("MainWindow 已加载前端：{Uri}", fileUri);
+
+        // 关键修复：用 CoreWebView2InitializationCompleted 回调控制 _isReady
+        // 这里只触发 Navigate，真正的加载完成事件在回调里
+        if (_webView.CoreWebView2 is not null)
+        {
+            _webView.CoreWebView2.Navigate(fileUri);
+            _isReady = true;  // CoreWebView2 已存在（同步路径）
+        }
+        // 否则等 CoreWebView2InitializationCompleted 回调里设
+        _logger.LogInformation("MainWindow 已请求加载前端：{Uri}", fileUri);
     }
 
     /// <summary>
     /// 跳转到前端路由（不重新加载整个页面，走 SPA 内部 hash 切换）。
+    /// 关键修复：先 Show 窗口，再检查 _isReady；不再因 _isReady = false 而跳过 Show。
     /// </summary>
     public void NavigateToRoute(string route)
     {
+        // 先 Show 窗口，确保用户能看到反馈
+        if (!Visible) Show();
+        BringToFront();
+        Activate();
+
+        // _isReady = false 时（WebView2 还没好），窗口已开但路由不跳转
         if (!_isReady || _webView.CoreWebView2 is null)
         {
-            _logger.LogWarning("WebView2 未就绪，跳转请求被忽略：{Route}", route);
+            _logger.LogWarning("WebView2 未就绪，已开窗口但路由不跳转：{Route}", route);
             return;
         }
 
@@ -96,16 +127,12 @@ public sealed class MainWindow : Form
         {
             _webView.CoreWebView2.ExecuteScriptAsync(
                 $"window.location.hash = '#/{route}'");
+            _logger.LogInformation("跳转路由：{Route}", route);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "NavigateToRoute 失败：{Route}", route);
-            return;
         }
-
-        if (!Visible) Show();
-        BringToFront();
-        Activate();
     }
 
     protected override void Dispose(bool disposing)
