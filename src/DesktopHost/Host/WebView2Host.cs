@@ -11,13 +11,13 @@ namespace FlowRing.DesktopHost.Host;
 /// </summary>
 public sealed class WebView2Host : IDisposable
 {
-    private readonly HostController _controller;
+    private readonly IHostController _controller;
     private readonly ILogger<WebView2Host> _logger;
     private CoreWebView2Environment? _environment;
 
     public bool IsInitialized { get; private set; }
 
-    public WebView2Host(HostController controller, ILoggerFactory? loggerFactory = null)
+    public WebView2Host(IHostController controller, ILoggerFactory? loggerFactory = null)
     {
         _controller = controller;
         _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<WebView2Host>();

@@ -8,7 +8,7 @@ namespace FlowRing.DesktopHost.Host;
 /// 全局控制器：负责 paused 状态切换、激活、退出、跳转到 WebView2 页面。
 /// 注入到 TrayIcon 与 WebView2Host。
 /// </summary>
-public sealed class HostController : IDisposable
+public sealed class HostController : IHostController, IDisposable
 {
     private readonly ILogger<HostController> _logger;
     private readonly Win32DesktopBridge _bridge;
