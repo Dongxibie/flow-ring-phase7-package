@@ -11,6 +11,8 @@ namespace FlowRing.DesktopHost.Host;
 /// WebView2 宿主：创建 Environment + 实例化 MainWindow + 暴露 NavigateTo。
 /// v5 修复：ResolveWebView2RuntimePath → ResolveWebView2RuntimeFolder，返回 folder 路径而非 exe 路径；
 /// 注册表显式读 64-bit + 32-bit 两个视图；加 Application 目录枚举兜底（不依赖注册表）。
+///
+/// v15 修复：MainWindow.InitializeAsync 完成后自动 Show（v14 之前用户必须手动点托盘菜单才看到主窗口）
 /// </summary>
 public sealed class WebView2Host : IDisposable
 {
@@ -66,7 +68,7 @@ public sealed class WebView2Host : IDisposable
         var frontendDistPath = ResolveFrontendDistPath();
         _logger.LogInformation("前端 dist 路径：{Path}", frontendDistPath);
 
-        // 实例化 MainWindow（不 Show，等用户点菜单再 Show）
+        // 实例化 MainWindow
         _mainWindow = new MainWindow(_controller);
         try
         {
@@ -79,6 +81,19 @@ public sealed class WebView2Host : IDisposable
 
         IsInitialized = true;
         _logger.LogInformation("WebView2Host + MainWindow 初始化链路完成");
+
+        // v15 关键修复：MainWindow 初始化后自动 Show
+        // v14 之前用户必须手动点托盘菜单才看到主窗口。
+        // v15 自动 Show 让用户启动 host 后立即看到主窗口（截图即可）。
+        try
+        {
+            _mainWindow?.Show();
+            _logger.LogInformation("MainWindow 已自动 Show");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MainWindow 自动 Show 失败");
+        }
     }
 
     public void NavigateTo(string route)
