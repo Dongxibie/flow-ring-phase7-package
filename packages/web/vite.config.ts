@@ -5,11 +5,23 @@ import react from '@vitejs/plugin-react';
 // 开发模式下 dev server 监听 5179，host 通过 webView2.CoreWebView2.Environment
 // 在 Phase 3 起指向 http://localhost:5179；MVP 仅打 dist 包内嵌。
 //
-// v6 修复：Vite build 显式 base='./'，让生成的 index.html 用相对路径引用 assets/...
-// WebView2 用 file:// 加载 dist/index.html，base='/' 默认值会导致 /assets/... 解析为
-// file:///assets/...（磁盘根），所有静态资源 404，主页面看起来白屏。
+// v18.6 修法：vite build 改 base 为空字符串（不输出 ./ 前缀）
+//
+// v6 改 base='./' 当时修的是 file:// 协议路径——但 WebView2 用 SetVirtualHostNameToFolderMapping
+// 后 `./` 相对路径仍可能 404：HTML 在 https://flowring.local/index.html 加载，
+// `<script src="./assets/...">` WebView2 解析为 `https://flowring.local/./assets/...`（含点）
+// 或只取父目录导致资源 404 → JS bundle 不跑 → React 没 mount → 主体白屏。
+//
+// v18.5 实测：dist/index.html 输出 `./assets/index-Xchg7aiY.js`，host 跑后收不到任何
+// WebMessageReceived（前端没 mount + postMessage 没发），确认根因是资源加载失败。
+//
+// v18.6 改 base 为空字符串：
+// - HTML 输出 <script src="assets/index-Xchg7aiY.js">
+// - 在 https://flowring.local/index.html 加载 → 相对路径自动解析为
+//   https://flowring.local/assets/index-Xchg7aiY.js
+// - JS bundle 加载成功 → React mount → postState 触发 → host WebMessageReceived 看到 'app.mount'
 export default defineConfig({
-  base: './',
+  base: '',
   plugins: [react()],
   build: {
     outDir: 'dist',
