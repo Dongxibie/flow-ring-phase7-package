@@ -11,16 +11,22 @@ namespace FlowRing.DesktopHost.UI;
 /// <summary>
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 ///
-/// v18.1 增强诊断（大审查后定位真实根因）：
-/// - 之前所有 v10-v18 都基于"React Router 路径匹配"假设，但 v18 vanilla useState 完全不依赖路径匹配仍白屏
-/// - 真实根因不在 React Router，在更底层：
-///   * React 可能没 mount（页面 mount 失败抛异常被 React 默默吞了）
-///   * dist 资源可能没加载（WebView2 加载 HTML 但 JS 资源 404）
-///   * 组件可能 import 失败（ProfileManagerPage 用 useBridge 钩子可能 throw）
-/// v18.1 加诊断：
-///   * 在 index.html 注入 inline script 设 window.__errors = [] 拦截 console.error
-///   * NavigationCompleted 后注入 JS 拿页面 state + window.__errors
-///   * 1s/3s/5s 轮询触发 dump（capture async errors）
+/// v18.2 修法（大审查后定位真实根因）：
+///
+/// 之前所有 v10-v18.1 NavigationCompleted async lambda 都有死锁——
+///   * 默认 ConfigureAwait(true) 让 await post 回调到 STA WinForms SynchronizationContext
+///   * STA 线程被 Application.Run() 阻塞，等同步任务
+///   * await 永远不返回 → handler 抛死锁 → log 不输出 → async void 默默吞
+///
+/// 这就是为什么 v15 (Status=Unknown) 之后看不到 URL 替换 / 页面状态 log 的根因。
+///
+/// v18.2 修：所有 await 加 .ConfigureAwait(false)
+///   * await 不 post 回 STA 线程
+///   * 在 ThreadPool 上完成
+///   * handler 完整执行，log 正常输出
+///
+/// WebView2Info 类用 .ConfigureAwait(false) — 因为我们不依赖 UI 线程同步上下文
+/// （WebView2 的 CoreWebView2 调用是 STA 线程安全的）。
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -51,7 +57,6 @@ public sealed class MainWindow : Form
         _webView.Dock = DockStyle.Fill;
         Controls.Add(_webView);
 
-        // 关闭按钮拦截：只 Hide，不退出 host
         FormClosing += (_, e) =>
         {
             if (e.CloseReason == CloseReason.UserClosing)
@@ -100,14 +105,12 @@ public sealed class MainWindow : Form
         };
     }
 
-    /// <summary>
-    /// 异步初始化 WebView2 + 加载前端 dist。
-    /// </summary>
     public async Task InitializeAsync(string frontendDistPath, CancellationToken ct)
     {
         try
         {
-            await _webView.EnsureCoreWebView2Async(null);
+            // v18.2：await 加 ConfigureAwait(false) 避免 STA 死锁
+            await _webView.EnsureCoreWebView2Async(null).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -149,9 +152,7 @@ public sealed class MainWindow : Form
     }
 
     /// <summary>
-    /// v18.1 增强诊断：NavigationCompleted 后立刻 + 1s + 3s 多次 dump 页面 state。
-    /// 同时在 index.html 注入 inline script（v18.1 vite plugin postbuild）拦截 window.onerror 和 console.error。
-    /// 把错误存到 window.__errors 数组，dump 时一起输出。
+    /// v18.2 关键修复：所有 await 都加 ConfigureAwait(false) 避免 STA 死锁。
     /// </summary>
     private void AttachNavigationListener()
     {
@@ -161,12 +162,12 @@ public sealed class MainWindow : Form
             _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
                 e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
 
-            // v18.1：立刻 + 1s + 3s 多次捕获（页面可能 async render）
-            await DumpPageStateAsync("t+0s");
-            await Task.Delay(1000);
-            await DumpPageStateAsync("t+1s");
-            await Task.Delay(2000);
-            await DumpPageStateAsync("t+3s");
+            // v18.2：t+0s / t+1s / t+3s 多次 dump，全部 ConfigureAwait(false)
+            await DumpPageStateAsync("t+0s").ConfigureAwait(false);
+            await Task.Delay(1000).ConfigureAwait(false);
+            await DumpPageStateAsync("t+1s").ConfigureAwait(false);
+            await Task.Delay(2000).ConfigureAwait(false);
+            await DumpPageStateAsync("t+3s").ConfigureAwait(false);
         };
         _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
     }
@@ -175,23 +176,24 @@ public sealed class MainWindow : Form
     {
         try
         {
-            var js = @"(() => {
-                const errs = window.__errors || [];
-                const root = document.getElementById('root');
-                return JSON.stringify({
-                    url: location.href,
-                    title: document.title,
-                    bodyText: document.body ? document.body.innerText.slice(0, 300) : null,
-                    bodyHTMLLen: document.body ? document.body.innerHTML.length : 0,
-                    hasHeader: !!document.querySelector('header'),
-                    rootExists: !!root,
-                    rootInnerLen: root ? root.innerHTML.length : 0,
-                    rootChildren: root ? root.children.length : 0,
-                    errors: errs,
-                    scriptLoadErrors: window.__scriptErrors || []
-                });
-            })()";
-            var json = await _webView.CoreWebView2!.ExecuteScriptAsync(js);
+            // v18.2：await ConfigureAwait(false) 避免 STA 死锁
+            var json = await _webView.CoreWebView2!.ExecuteScriptAsync(
+                @"(() => {
+                    const errs = window.__errors || [];
+                    const root = document.getElementById('root');
+                    return JSON.stringify({
+                        url: location.href,
+                        title: document.title,
+                        bodyText: document.body ? document.body.innerText.slice(0, 300) : null,
+                        bodyHTMLLen: document.body ? document.body.innerHTML.length : 0,
+                        hasHeader: !!document.querySelector('header'),
+                        rootExists: !!root,
+                        rootInnerLen: root ? root.innerHTML.length : 0,
+                        rootChildren: root ? root.children.length : 0,
+                        errors: errs,
+                        scriptLoadErrors: window.__scriptErrors || []
+                    });
+                })()").ConfigureAwait(false);
             _logger.LogInformation("MainWindow 页面状态 [{Tag}]：{Json}", tag, json);
         }
         catch (Exception ex)
