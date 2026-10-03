@@ -153,8 +153,8 @@ public sealed class MainWindow : Form
             _logger.LogInformation("NavigationStarting：{Uri}", e.Uri);
         core.NavigationCompleted += (_, e) =>
             _logger.LogInformation(
-                "NavigationCompleted：IsSuccess={IsSuccess} Http={Http} Url={Url}",
-                e.IsSuccess, e.HttpStatusCode, e.Uri);
+                "NavigationCompleted：IsSuccess={IsSuccess} Http={Http} ErrorStatus={Err}",
+                e.IsSuccess, e.HttpStatusCode, e.WebErrorStatus);
         core.ContentLoading += (_, _) => _logger.LogInformation("ContentLoading");
         core.DOMContentLoaded += (_, _) => _logger.LogInformation("DOMContentLoaded");
         core.ProcessFailed += (_, e) =>
