@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -12,27 +13,10 @@ namespace FlowRing.DesktopHost.UI;
 /// <summary>
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 ///
-/// v18.4 终极诊断版（大审查后定位真实根因）：
-///
-/// v18.3 跑后症状：
-/// - handler 第一行 log 输出（"NavigationCompleted：status=Unknown..."）
-/// - 但后续 dump log 没有
-/// - 第一行后 handler 第一行 log 后停住
-///
-/// v18.3 的修法（handler 同步 + Task.Run + ConfigureAwait(false)）暴露了更深的问题：
-/// - v18.2 ConfigureAwait(false) → CoreWebView2 在 ThreadPool 抛 InvalidOperationException
-/// - v18.3 handler 同步 + Task.Run 后 dump 没出现 = Task.Run 任务崩了但 fire-and-forget 吞了
-///
-/// v18.4 改法：
-/// 1. 全局异常捕获
-///     - AppDomain.CurrentDomain.UnhandledException → 同步未捕获异常
-///     - TaskScheduler.UnobservedTaskException → async Task 未观察异常
-///     - 写到 C:\FlowRing-Fix\flowring-exceptions.log（不走 ILogger，可能死锁）
-/// 2. 把所有 sync handler 第一行 log 立即在 STA 输出（保证至少有 log）
-/// 3. 简化 dump：用 sync 路径调 GetBrowserVersionString（同步 API），拿真实状态
-/// 4. 不依赖任何 async lambda ——避免 STA 死锁
-///
-/// 如果 v18.4 仍只看到第一行 log 而异常文件为空 → 说明异常在更底层（如 WinForms COM 初始化失败）
+/// v18.4 终极诊断版：
+/// - 全局异常 handler（AppDomain + TaskScheduler）
+/// - 同步访问 CoreWebView2（STA 线程安全）
+/// - Task.Run 异步 dump + ConfigureAwait(false)（ThreadPool）
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -52,7 +36,6 @@ public sealed class MainWindow : Form
         _controller = controller;
         _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<MainWindow>();
 
-        // v18.4：全局异常 handler，写到文件（不走 ILogger，避免死锁）
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             WriteExceptionToFile("AppDomain.UnhandledException", e.ExceptionObject as Exception);
@@ -123,30 +106,27 @@ public sealed class MainWindow : Form
         };
     }
 
-    /// <summary>
-    /// 同步方法，写异常到文件（避免 ILogger 死锁）。
-    /// </summary>
     private static void WriteExceptionToFile(string source, Exception? ex)
     {
         if (ex == null) return;
         try
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"=== {DateTime.Now:HH:mm:ss.fff} {source} ===");
-            sb.AppendLine($"Exception: {ex.GetType().FullName}");
-            sb.AppendLine($"Message: {ex.Message}");
-            sb.AppendLine($"StackTrace: {ex.StackTrace}");
+            sb.Append(DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)).Append(' ').Append(source).Append('\n');
+            sb.Append("Exception: ").Append(ex.GetType().FullName).Append('\n');
+            sb.Append("Message: ").Append(ex.Message).Append('\n');
+            sb.Append("StackTrace: ").Append(ex.StackTrace).Append('\n');
             if (ex.InnerException != null)
             {
-                sb.AppendLine($"InnerException: {ex.InnerException.GetType().FullName}");
-                sb.AppendLine($"InnerMessage: {ex.InnerException.Message}");
-                sb.AppendLine($"InnerStackTrace: {ex.InnerException.StackTrace}");
+                sb.Append("InnerException: ").Append(ex.InnerException.GetType().FullName).Append('\n');
+                sb.Append("InnerMessage: ").Append(ex.InnerException.Message).Append('\n');
+                sb.Append("InnerStackTrace: ").Append(ex.InnerException.StackTrace).Append('\n');
             }
             File.AppendAllText(ExceptionLogPath, sb.ToString());
         }
         catch
         {
-            // 不再 throw —— 否则可能引发更多异常
+            // 不抛异常
         }
     }
 
@@ -197,15 +177,6 @@ public sealed class MainWindow : Form
         }
     }
 
-    /// <summary>
-    /// v18.4 同步 handler + 同步 thread 同步函数调 dump（避免 STA 死锁）。
-    /// 同步 handler 在 STA 线程触发，CoreWebView2 访问安全。
-    /// 同步 API：
-    /// - _webView.CoreWebView2.Source（同步）
-    /// - GetBrowserVersionString（同步）
-    /// 异步 API（fire-and-forget 到 ThreadPool）：
-    /// - ExecuteScriptAsync
-    /// </summary>
     private void AttachNavigationListener()
     {
         if (_webView.CoreWebView2 is null) return;
@@ -214,17 +185,14 @@ public sealed class MainWindow : Form
         {
             try
             {
-                // 同步部分：STA 线程安全
                 _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
                     e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
-                _logger.LogInformation("MainWindow GetBrowserVersionString：{Version}", _webView.CoreWebView2.BrowserVersionString);
             }
             catch (Exception ex)
             {
                 WriteExceptionToFile("NavigationCompleted.Sync", ex);
             }
 
-            // 异步部分：fire-and-forget 到 ThreadPool
             _ = Task.Run(async () =>
             {
                 try
