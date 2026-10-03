@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading.Tasks;
 using FlowRing.DesktopHost.Host;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -9,13 +10,17 @@ namespace FlowRing.DesktopHost.UI;
 
 /// <summary>
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
-/// 关闭按钮只 Hide（不退出 host），退出走托盘菜单。
 ///
-/// v12 修法（前端 + host 双轨）：
-/// 1. main.tsx 回退 v9 风格 path '/' 父路由 + children index（v12 commit 1c9a812b）
-///    v11 嵌套 catch-all 实测破坏 Layout 渲染
-/// 2. host 端：NavigationCompleted 后 ExecuteScriptAsync 把 /index.html 改 /
-///    React Router 看到路径 '/' → 匹配 path '/' 父 → Layout 渲染 + children index ProfileManagerPage
+/// v18.1 增强诊断（大审查后定位真实根因）：
+/// - 之前所有 v10-v18 都基于"React Router 路径匹配"假设，但 v18 vanilla useState 完全不依赖路径匹配仍白屏
+/// - 真实根因不在 React Router，在更底层：
+///   * React 可能没 mount（页面 mount 失败抛异常被 React 默默吞了）
+///   * dist 资源可能没加载（WebView2 加载 HTML 但 JS 资源 404）
+///   * 组件可能 import 失败（ProfileManagerPage 用 useBridge 钩子可能 throw）
+/// v18.1 加诊断：
+///   * 在 index.html 注入 inline script 设 window.__errors = [] 拦截 console.error
+///   * NavigationCompleted 后注入 JS 拿页面 state + window.__errors
+///   * 1s/3s/5s 轮询触发 dump（capture async errors）
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -144,10 +149,9 @@ public sealed class MainWindow : Form
     }
 
     /// <summary>
-    /// v12 关键修复：NavigationCompleted 后：
-    /// 1. 用 history.replaceState 把 URL 改成 '/'（让 React Router 拿到正确路径）
-    /// 2. 触发 popstate 事件让 Router 重新解析
-    /// 3. 注入诊断 JS 拿页面状态
+    /// v18.1 增强诊断：NavigationCompleted 后立刻 + 1s + 3s 多次 dump 页面 state。
+    /// 同时在 index.html 注入 inline script（v18.1 vite plugin postbuild）拦截 window.onerror 和 console.error。
+    /// 把错误存到 window.__errors 数组，dump 时一起输出。
     /// </summary>
     private void AttachNavigationListener()
     {
@@ -157,48 +161,45 @@ public sealed class MainWindow : Form
             _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
                 e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
 
-            // v12 关键：替换 URL 为 '/' 让 React Router 匹配 path '/' 父路由
-            try
-            {
-                var currentUrl = _webView.CoreWebView2.Source;
-                if (currentUrl.Contains("/index.html"))
-                {
-                    var replaceJs = "history.replaceState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate'));";
-                    await _webView.CoreWebView2.ExecuteScriptAsync(replaceJs);
-                    _logger.LogInformation("MainWindow URL 已替换：/index.html → /");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "MainWindow URL 替换失败");
-            }
+            // v18.1：立刻 + 1s + 3s 多次捕获（页面可能 async render）
+            await DumpPageStateAsync("t+0s");
+            await Task.Delay(1000);
+            await DumpPageStateAsync("t+1s");
+            await Task.Delay(2000);
+            await DumpPageStateAsync("t+3s");
+        };
+        _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
+    }
 
-            // 诊断：拿页面真实状态
-            try
-            {
-                var js = @"JSON.stringify({
+    private async Task DumpPageStateAsync(string tag)
+    {
+        try
+        {
+            var js = @"(() => {
+                const errs = window.__errors || [];
+                const root = document.getElementById('root');
+                return JSON.stringify({
                     url: location.href,
                     title: document.title,
                     bodyText: document.body ? document.body.innerText.slice(0, 300) : null,
                     bodyHTMLLen: document.body ? document.body.innerHTML.length : 0,
                     hasHeader: !!document.querySelector('header'),
-                    hasNavLink: !!document.querySelector('header a'),
-                    rootChildren: document.getElementById('root') ? document.getElementById('root').children.length : 0
-                })";
-                var json = await _webView.CoreWebView2.ExecuteScriptAsync(js);
-                _logger.LogInformation("MainWindow 页面状态：{Json}", json);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "MainWindow 注入诊断 JS 失败");
-            }
-        };
-        _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
+                    rootExists: !!root,
+                    rootInnerLen: root ? root.innerHTML.length : 0,
+                    rootChildren: root ? root.children.length : 0,
+                    errors: errs,
+                    scriptLoadErrors: window.__scriptErrors || []
+                });
+            })()";
+            var json = await _webView.CoreWebView2!.ExecuteScriptAsync(js);
+            _logger.LogInformation("MainWindow 页面状态 [{Tag}]：{Json}", tag, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MainWindow 注入诊断 JS [{Tag}] 失败", tag);
+        }
     }
 
-    /// <summary>
-    /// 跳转到前端路由（不重新加载整个页面，走 SPA 内部 hash 切换）。
-    /// </summary>
     public void NavigateToRoute(string route)
     {
         if (!Visible) Show();
