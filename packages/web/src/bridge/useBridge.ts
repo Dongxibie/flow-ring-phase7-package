@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type {
   ProfileListEntry,
   StudioSavePayload,
@@ -135,7 +135,12 @@ export function useBridge(): BridgeApi {
     };
   }, []);
 
-  return {
+  // v19 白屏根因修复：useBridge() 每次渲染都返回新的对象字面量 →
+  // 消费方 useEffect 依赖 [bridge] 时每次渲染都判定依赖变化 → effect 重跑 →
+  // listProfiles() 返回新数组 → setProfiles → 再渲染 → 无限循环（约 1.2 万次/秒）。
+  // 微任务自续队的循环饿死渲染器主线程 → 永远走不到绘制帧 → 白屏。
+  // useMemo 让 bridge 引用跨渲染稳定，循环从根上断掉。
+  return useMemo(() => ({
     isInWebView2: inWv2,
     listProfiles,
     loadStudio,
@@ -143,5 +148,5 @@ export function useBridge(): BridgeApi {
     exportFlowCode,
     importFlowCode,
     onWebMessage,
-  };
+  }), [inWv2, listProfiles, loadStudio, saveStudio, exportFlowCode, importFlowCode, onWebMessage]);
 }
