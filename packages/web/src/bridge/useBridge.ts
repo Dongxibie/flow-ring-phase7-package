@@ -9,7 +9,7 @@ import type {
 declare global {
   interface Window {
     chrome?: {
-      webview2?: {
+      webview?: {
         postMessage(json: string): void;
         addEventListener(event: 'message', handler: (e: { data: string }) => void): void;
       };
@@ -32,7 +32,8 @@ export interface BridgeApi {
 }
 
 function isWebView2(): boolean {
-  return typeof window !== 'undefined' && window.chrome?.webview2 !== undefined;
+  // v19 修复：真实 API 是 window.chrome.webview（没有 "2"）
+  return typeof window !== 'undefined' && window.chrome?.webview !== undefined;
 }
 
 export function useBridge(): BridgeApi {
@@ -40,10 +41,10 @@ export function useBridge(): BridgeApi {
   const handlersRef = useRef<Set<(json: string) => void>>(new Set());
 
   useEffect(() => {
-    if (!inWv2 || !window.chrome?.webview2) {
+    if (!inWv2 || !window.chrome?.webview) {
       return;
     }
-    const wv2 = window.chrome.webview2;
+    const wv2 = window.chrome.webview;
     const onMsg = (e: { data: string }) => {
       handlersRef.current.forEach((h: (data: string) => void) => h(e.data));
     };
@@ -55,8 +56,8 @@ export function useBridge(): BridgeApi {
 
   const send = useCallback((msg: unknown) => {
     const json = JSON.stringify(msg);
-    if (inWv2 && window.chrome?.webview2) {
-      window.chrome.webview2.postMessage(json);
+    if (inWv2 && window.chrome?.webview) {
+      window.chrome.webview.postMessage(json);
     } else {
       console.log('[useBridge:stub]', json);
     }
