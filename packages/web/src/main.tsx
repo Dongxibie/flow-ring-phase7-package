@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { createRoot } from 'react.dom/client';
+import { createRoot } from 'react-dom/client';
 import { RouterProvider, createBrowserRouter, type RouteObject } from 'react-router-dom';
 import { Layout } from './Layout';
 import { ProfileManagerPage } from './pages/ProfileManager/ProfileManagerPage';
