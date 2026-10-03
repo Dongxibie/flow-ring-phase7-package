@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useBridge } from '../../bridge/useBridge';
 import { useFlowStore, type ProfileSummary } from '../../store/flowStore';
 
+// v20：暗色编辑排版索引行（编号 + 细线 + 橄榄"使用中"标签）。
+// v19 白屏修复口诀仍然有效：effect 依赖只收稳定引用，不收整个 bridge 对象。
 export function ProfileManagerPage(): JSX.Element {
   const bridge = useBridge();
   const profiles = useFlowStore((s: import('../../store/flowStore').FlowState) => s.profiles);
@@ -20,52 +22,39 @@ export function ProfileManagerPage(): JSX.Element {
     }).catch((e: unknown) => {
       setError(e instanceof Error ? e.message : String(e));
     });
-    // v19 白屏根因修复：依赖从整个 bridge 对象收敛到 listProfiles（useCallback 稳定引用）。
-    // 之前 [bridge, setProfiles] 里 bridge 每次 render 都是新对象 → effect 每渲染重跑 →
-    // listProfiles 新 sample 数组 → setProfiles → 再渲染 → 微任务级死循环饿死渲染帧（白屏）。
     return () => {
       cancelled = true;
     };
   }, [bridge.listProfiles, setProfiles]);
 
   return (
-    <section style={{ padding: '16px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Profile 管理</h2>
-        <button type="button">+ 新建 Profile</button>
-      </header>
-
-      {error !== null && <p style={{ color: 'crimson' }}>{error}</p>}
-
-      <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-        {profiles.map((p: ProfileSummary) => (
-          <li
-            key={p.id}
-            style={{
-              border: '1px solid var(--fr-border, #dadbe1)',
-              borderRadius: '12px',
-              padding: '16px',
-              background: p.id === activeProfileId ? 'rgba(0, 180, 0, 0.08)' : 'transparent',
-            }}
-          >
-            <strong>{p.name}</strong>
-            {p.isDefault && <span style={{ marginLeft: '8px', fontSize: '12px' }}>默认</span>}
-            <p style={{ fontSize: '12px', opacity: 0.7 }}>{p.id}</p>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-              <button
-                type="button"
-                onClick={() => setActiveProfile(p.id)}
-                disabled={p.id === activeProfileId}
-              >
-                设为当前
-              </button>
-              <button type="button">编辑</button>
-              <button type="button">复制</button>
-              <button type="button" disabled={p.isDefault}>删除</button>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <div className="stack">
+      {error !== null && <p className="err">{error}</p>}
+      {profiles.map((p: ProfileSummary, i: number) => (
+        <div className="erow" key={p.id}>
+          <span className="idx">{String(i + 1).padStart(2, '0')}</span>
+          <span className="name">{p.name}</span>
+          <span className="pid">{p.id}</span>
+          <span className="sp" />
+          {p.id === activeProfileId && <span className="tag">使用中</span>}
+          <span className="acts">
+            {p.id !== activeProfileId && (
+              <>
+                <b onClick={() => setActiveProfile(p.id)}>设为当前</b>
+                {' · '}
+              </>
+            )}
+            编辑 · 复制 · 删除
+          </span>
+        </div>
+      ))}
+      <div className="newbtn-wrap">
+        <span className="bk tl" />
+        <span className="bk tr" />
+        <span className="bk bl" />
+        <span className="bk br" />
+        <div className="newbtn">＋ 新建档案</div>
+      </div>
+    </div>
   );
 }
