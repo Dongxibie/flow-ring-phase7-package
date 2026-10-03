@@ -20,10 +20,13 @@ export function ProfileManagerPage(): JSX.Element {
     }).catch((e: unknown) => {
       setError(e instanceof Error ? e.message : String(e));
     });
+    // v19 白屏根因修复：依赖从整个 bridge 对象收敛到 listProfiles（useCallback 稳定引用）。
+    // 之前 [bridge, setProfiles] 里 bridge 每次 render 都是新对象 → effect 每渲染重跑 →
+    // listProfiles 新 sample 数组 → setProfiles → 再渲染 → 微任务级死循环饿死渲染帧（白屏）。
     return () => {
       cancelled = true;
     };
-  }, [bridge, setProfiles]);
+  }, [bridge.listProfiles, setProfiles]);
 
   return (
     <section style={{ padding: '16px' }}>

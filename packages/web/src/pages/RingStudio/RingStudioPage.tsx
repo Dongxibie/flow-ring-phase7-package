@@ -50,7 +50,8 @@ export function RingStudioPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [bridge, profileId]);
+    // v19 白屏根因修复：同 ProfileManagerPage，依赖收敛到稳定的方法引用
+  }, [bridge.loadStudio, profileId]);
 
   const actionSlotCount = useMemo(
     () => Object.values(slots).filter((s) => s.kind === 'action').length,
