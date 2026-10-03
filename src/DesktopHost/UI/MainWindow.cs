@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using FlowRing.DesktopHost.Host;
 using Microsoft.Extensions.Logging;
@@ -11,29 +12,33 @@ namespace FlowRing.DesktopHost.UI;
 /// <summary>
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 ///
-/// v18.3 修法（大审查后定位真实根因）：
+/// v18.4 终极诊断版（大审查后定位真实根因）：
 ///
-/// v18.2 暴露的错误：System.InvalidOperationException: CoreWebView2 can only be accessed from the UI thread
+/// v18.3 跑后症状：
+/// - handler 第一行 log 输出（"NavigationCompleted：status=Unknown..."）
+/// - 但后续 dump log 没有
+/// - 第一行后 handler 第一行 log 后停住
 ///
-/// 这意味着 WebView2 的 CoreWebView2 属性访问必须在创建它的 STA UI 线程。
-/// v18.2 错误地把 await 加 ConfigureAwait(false) → await 跑到 ThreadPool → 访问 CoreWebView2 抛错。
+/// v18.3 的修法（handler 同步 + Task.Run + ConfigureAwait(false)）暴露了更深的问题：
+/// - v18.2 ConfigureAwait(false) → CoreWebView2 在 ThreadPool 抛 InvalidOperationException
+/// - v18.3 handler 同步 + Task.Run 后 dump 没出现 = Task.Run 任务崩了但 fire-and-forget 吞了
 ///
-/// 之前 v10-v18.1 NavigationCompleted async lambda 都有"实际死锁"——
-///   * 默认 ConfigureAwait(true) 让 await post 回 STA
-///   * STA 被 Application.Run() 阻塞
-///   * await 永远不返回 → handler 抛死锁 → async void 默默吞异常
-/// 这就是为什么之前 log 只看到第一行（status=Unknown）但看不到任何后续 dump。
+/// v18.4 改法：
+/// 1. 全局异常捕获
+///     - AppDomain.CurrentDomain.UnhandledException → 同步未捕获异常
+///     - TaskScheduler.UnobservedTaskException → async Task 未观察异常
+///     - 写到 C:\FlowRing-Fix\flowring-exceptions.log（不走 ILogger，可能死锁）
+/// 2. 把所有 sync handler 第一行 log 立即在 STA 输出（保证至少有 log）
+/// 3. 简化 dump：用 sync 路径调 GetBrowserVersionString（同步 API），拿真实状态
+/// 4. 不依赖任何 async lambda ——避免 STA 死锁
 ///
-/// v18.3 修：handler 同步（synchronous），立即调 Task.Run 把异步操作跑到 ThreadPool
-///   * handler 第一行（log 信息）立即输出（STA 线程）
-///   * 后续 CoreWebView2.ExecuteScriptAsync 调用 在 ThreadPool（避免 STA 死锁 + 错误）
-///   * ConfigureAwait(false) 让 await 不 post 回 STA
-///   * 用 .ConfigureAwait(false) 而不是默认，避免 STA 上下文捕获
+/// 如果 v18.4 仍只看到第一行 log 而异常文件为空 → 说明异常在更底层（如 WinForms COM 初始化失败）
 /// </summary>
 public sealed class MainWindow : Form
 {
     private const string VirtualHost = "flowring.local";
     private const string IndexUrl = $"https://{VirtualHost}/index.html";
+    private const string ExceptionLogPath = @"C:\FlowRing-Fix\flowring-exceptions.log";
 
     private readonly HostController _controller;
     private readonly ILogger<MainWindow> _logger;
@@ -46,6 +51,17 @@ public sealed class MainWindow : Form
     {
         _controller = controller;
         _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<MainWindow>();
+
+        // v18.4：全局异常 handler，写到文件（不走 ILogger，避免死锁）
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            WriteExceptionToFile("AppDomain.UnhandledException", e.ExceptionObject as Exception);
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            WriteExceptionToFile("TaskScheduler.UnobservedTaskException", e.Exception);
+            e.SetObserved();
+        };
 
         Text = "Flow Ring";
         Width = 1200;
@@ -96,7 +112,7 @@ public sealed class MainWindow : Form
             else
             {
                 _isReady = false;
-                _logger.LogError(e.InitializationException, "CoreWeb2 初始化失败");
+                _logger.LogError(e.InitializationException, "CoreWebView2 初始化失败");
                 if (!Visible) Show();
             }
         };
@@ -107,16 +123,42 @@ public sealed class MainWindow : Form
         };
     }
 
+    /// <summary>
+    /// 同步方法，写异常到文件（避免 ILogger 死锁）。
+    /// </summary>
+    private static void WriteExceptionToFile(string source, Exception? ex)
+    {
+        if (ex == null) return;
+        try
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"=== {DateTime.Now:HH:mm:ss.fff} {source} ===");
+            sb.AppendLine($"Exception: {ex.GetType().FullName}");
+            sb.AppendLine($"Message: {ex.Message}");
+            sb.AppendLine($"StackTrace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                sb.AppendLine($"InnerException: {ex.InnerException.GetType().FullName}");
+                sb.AppendLine($"InnerMessage: {ex.InnerException.Message}");
+                sb.AppendLine($"InnerStackTrace: {ex.InnerException.StackTrace}");
+            }
+            File.AppendAllText(ExceptionLogPath, sb.ToString());
+        }
+        catch
+        {
+            // 不再 throw —— 否则可能引发更多异常
+        }
+    }
+
     public async Task InitializeAsync(string frontendDistPath, CancellationToken ct)
     {
         try
         {
-            // 默认 ConfigureAwait(true)：回到创建 CoreWebView2 的 STA 线程
-            // 避免 v18.2 的 InvalidOperationException
             await _webView.EnsureCoreWebView2Async(null);
         }
         catch (Exception ex)
         {
+            WriteExceptionToFile("InitializeAsync.EnsureCoreWebView2Async", ex);
             _logger.LogError(ex, "WebView2 EnsureCoreWebView2Async 失败");
             throw;
         }
@@ -145,6 +187,7 @@ public sealed class MainWindow : Form
             }
             catch (Exception ex)
             {
+                WriteExceptionToFile("InitializeAsync.SetVirtualHostOrNavigate", ex);
                 _logger.LogError(ex, "同步路径 SetVirtualHost + Navigate 失败");
             }
         }
@@ -155,58 +198,56 @@ public sealed class MainWindow : Form
     }
 
     /// <summary>
-    /// v18.3 关键修复：handler 同步（synchronous），立即 fire-and-forget Task.Run。
-    ///
-    /// 之前 v10-v18.2 async lambda 死锁根因：
-    /// - 默认 ConfigureAwait(true) post 回 STA SynchronizationContext
-    /// - STA 被 Application.Run() 阻塞 → 死锁 → async void 默默吞
-    ///
-    /// v18.3 修法：
-    /// - handler 同步：CoreWebView2 属性访问在 STA 线程（安全）
-    /// - 第一行 log 立即输出
-    /// - 后续 ExecuteScriptAsync 调用 fire-and-forget Task.Run 到 ThreadPool
-    /// - Task.Run 内 async Task + ConfigureAwait(false) 避免 STA 死锁
+    /// v18.4 同步 handler + 同步 thread 同步函数调 dump（避免 STA 死锁）。
+    /// 同步 handler 在 STA 线程触发，CoreWebView2 访问安全。
+    /// 同步 API：
+    /// - _webView.CoreWebView2.Source（同步）
+    /// - GetBrowserVersionString（同步）
+    /// 异步 API（fire-and-forget 到 ThreadPool）：
+    /// - ExecuteScriptAsync
     /// </summary>
     private void AttachNavigationListener()
     {
         if (_webView.CoreWebView2 is null) return;
-        // 同步 handler：在 STA 线程上访问 CoreWebView2 属性
+
         _webView.CoreWebView2.NavigationCompleted += (_, e) =>
         {
-            _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
-                e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
+            try
+            {
+                // 同步部分：STA 线程安全
+                _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
+                    e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
+                _logger.LogInformation("MainWindow GetBrowserVersionString：{Version}", _webView.CoreWebView2.BrowserVersionString);
+            }
+            catch (Exception ex)
+            {
+                WriteExceptionToFile("NavigationCompleted.Sync", ex);
+            }
 
-            // fire-and-forget：把 async 操作搬到 ThreadPool
-            _ = HandleNavigationCompletedAsync();
+            // 异步部分：fire-and-forget 到 ThreadPool
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await DumpPageStateAsync("t+0s");
+                    await Task.Delay(1000);
+                    await DumpPageStateAsync("t+1s");
+                    await Task.Delay(2000);
+                    await DumpPageStateAsync("t+3s");
+                }
+                catch (Exception ex)
+                {
+                    WriteExceptionToFile("NavigationCompleted.AsyncTaskRun", ex);
+                }
+            });
         };
         _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
-    }
-
-    /// <summary>
-    /// v18.3：在 ThreadPool 上跑异步 dump，避免 STA 死锁。
-    /// </summary>
-    private async Task HandleNavigationCompletedAsync()
-    {
-        try
-        {
-            // v18.3：所有 await 都 ConfigureAwait(false)，避免 post 回 STA 死锁
-            await DumpPageStateAsync("t+0s").ConfigureAwait(false);
-            await Task.Delay(1000).ConfigureAwait(false);
-            await DumpPageStateAsync("t+1s").ConfigureAwait(false);
-            await Task.Delay(2000).ConfigureAwait(false);
-            await DumpPageStateAsync("t+3s").ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "MainWindow HandleNavigationCompletedAsync 失败");
-        }
     }
 
     private async Task DumpPageStateAsync(string tag)
     {
         try
         {
-            // v18.3：await ConfigureAwait(false) 避免 STA 死锁
             var json = await _webView.CoreWebView2!.ExecuteScriptAsync(
                 @"(() => {
                     const errs = window.__errors || [];
@@ -223,11 +264,12 @@ public sealed class MainWindow : Form
                         errors: errs,
                         scriptLoadErrors: window.__scriptErrors || []
                     });
-                })()").ConfigureAwait(false);
+                })()");
             _logger.LogInformation("MainWindow 页面状态 [{Tag}]：{Json}", tag, json);
         }
         catch (Exception ex)
         {
+            WriteExceptionToFile($"DumpPageStateAsync[{tag}]", ex);
             _logger.LogError(ex, "MainWindow 注入诊断 JS [{Tag}] 失败", tag);
         }
     }
@@ -252,6 +294,7 @@ public sealed class MainWindow : Form
         }
         catch (Exception ex)
         {
+            WriteExceptionToFile("NavigateToRoute", ex);
             _logger.LogError(ex, "NavigateToRoute 失败：{Route}", route);
         }
     }
