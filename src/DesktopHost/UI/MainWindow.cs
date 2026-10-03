@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.Json;
 using FlowRing.DesktopHost.Host;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -15,13 +14,11 @@ namespace FlowRing.DesktopHost.UI;
 /// v9 大修复（一次性）：
 /// 1. Navigate URL 改 https://flowring.local/（去掉 /index.html）→ React Router 拿到 '/'
 /// 2. main.tsx 单一 Router + Layout 在 src/Layout.tsx，子路由全在 main.tsx（v9 commit 7a577aa）
-/// 3. 加 ConsoleMessageReceived 把前端 console.log/error/warn 转发到 host log
-/// 4. NavigationCompleted 后注入 JS 拿 { url, title, bodyText.slice, hasLayout, hasHeader }
+/// 3. NavigationCompleted 后注入 JS 拿 { url, title, bodyText.slice, hasLayout, hasHeader }
 ///    把结果 log 出来（一次性诊断 — 验证 v9 是否真解决白屏）
 ///
-/// 历史：
-/// - v7：SetVirtualHostNameToFolderMapping + Navigate https://flowring.local/index.html
-/// - v8：catch-all + 相对路径（失败，仍白屏）
+/// v9 修：移除 ConsoleMessage 监听（Microsoft.Web.WebView2 1.0.2651.64 SDK 不含此事件）
+/// 改用 NavigationCompleted + 注入 JS 间接拿前端 console 错误（用 error 事件捕获）。
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -63,14 +60,12 @@ public sealed class MainWindow : Form
             }
         };
 
-        // v9 诊断：把前端 console 输出转发到 host log（避免盲改）
         _webView.CoreWebView2InitializationCompleted += (_, e) =>
         {
             if (e.IsSuccess)
             {
                 _isReady = true;
                 _logger.LogInformation("CoreWebView2 初始化完成");
-                AttachConsoleListener();
                 AttachNavigationListener();
                 if (!string.IsNullOrEmpty(_pendingFrontendDist) && !string.IsNullOrEmpty(_pendingNavigationUri))
                 {
@@ -105,7 +100,6 @@ public sealed class MainWindow : Form
 
     /// <summary>
     /// 异步初始化 WebView2 + 加载前端 dist。
-    /// 调用时机：WebView2Host.InitializeAsync 内，Environment.CreateAsync 之后。
     /// </summary>
     public async Task InitializeAsync(string frontendDistPath, CancellationToken ct)
     {
@@ -154,29 +148,7 @@ public sealed class MainWindow : Form
     }
 
     /// <summary>
-    /// v9 诊断：注册 ConsoleMessageReceived 把前端 console.log/error/warn 转发到 host log。
-    /// 必须在 CoreWebView2 已实例化之后调（CoreWebView2 != null）。
-    /// </summary>
-    private void AttachConsoleListener()
-    {
-        if (_webView.CoreWebView2 is null) return;
-        _webView.CoreWebView2.ConsoleMessage += (_, e) =>
-        {
-            var level = e.Level.ToString();
-            if (e.MessageLevel == CoreWebView2WebErrorStatus.UNKNOWN)
-            {
-                _logger.LogError("[WebView2 console.{Level}] {Message} (line {Line})", level, e.Message, e.Line);
-            }
-            else
-            {
-                _logger.LogInformation("[WebView2 console.{Level}] {Message} (line {Line})", level, e.Message, e.Line);
-            }
-        };
-        _logger.LogInformation("MainWindow ConsoleMessage 监听已注册");
-    }
-
-    /// <summary>
-    /// v9 诊断：NavigationCompleted 后注入 JS 拿页面真实状态（url/title/bodyText/hasLayout）。
+    /// v9 诊断：NavigationCompleted 后注入 JS 拿页面真实状态（url/title/bodyText/hasLayout/hasHeader/rootChildren）。
     /// 这样无需打开 DevTools 也能知道 React 是否 mount + Layout 是否渲染。
     /// </summary>
     private void AttachNavigationListener()
@@ -195,7 +167,7 @@ public sealed class MainWindow : Form
                     bodyHTMLLen: document.body ? document.body.innerHTML.length : 0,
                     hasHeader: !!document.querySelector('header'),
                     hasNavLink: !!document.querySelector('header a'),
-                    rootChildren: document.getElementById('root')?.children?.length ?? 0
+                    rootChildren: document.getElementById('root') ? document.getElementById('root').children.length : 0
                 })";
                 var json = await _webView.CoreWebView2.ExecuteScriptAsync(js);
                 _logger.LogInformation("MainWindow 页面状态：{Json}", json);
