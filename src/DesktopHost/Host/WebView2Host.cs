@@ -13,10 +13,14 @@ namespace FlowRing.DesktopHost.Host;
 /// 注册表显式读 64-bit + 32-bit 两个视图；加 Application 目录枚举兜底（不依赖注册表）。
 ///
 /// v15 修复：MainWindow.InitializeAsync 完成后自动 Show（v14 之前用户必须手动点托盘菜单才看到主窗口）
+///
+/// v16 修复：保存 ILoggerFactory 实例化时传给 MainWindow，
+/// 否则 MainWindow 内部用 NullLoggerFactory，所有 log 全被吞。
 /// </summary>
 public sealed class WebView2Host : IDisposable
 {
     private readonly HostController _controller;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<WebView2Host> _logger;
     private CoreWebView2Environment? _environment;
     private MainWindow? _mainWindow;
@@ -27,7 +31,8 @@ public sealed class WebView2Host : IDisposable
     public WebView2Host(HostController controller, ILoggerFactory? loggerFactory = null)
     {
         _controller = controller;
-        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<WebView2Host>();
+        _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;  // v16 存
+        _logger = _loggerFactory.CreateLogger<WebView2Host>();
     }
 
     public async Task InitializeAsync(CancellationToken ct)
@@ -68,8 +73,9 @@ public sealed class WebView2Host : IDisposable
         var frontendDistPath = ResolveFrontendDistPath();
         _logger.LogInformation("前端 dist 路径：{Path}", frontendDistPath);
 
-        // 实例化 MainWindow
-        _mainWindow = new MainWindow(_controller);
+        // v16 关键修复：实例化 MainWindow 时传 loggerFactory
+        // 之前 _mainWindow = new MainWindow(_controller) → loggerFactory=null → NullLogger → 所有 log 被吞
+        _mainWindow = new MainWindow(_controller, _loggerFactory);
         try
         {
             await _mainWindow.InitializeAsync(frontendDistPath, ct);
@@ -82,9 +88,7 @@ public sealed class WebView2Host : IDisposable
         IsInitialized = true;
         _logger.LogInformation("WebView2Host + MainWindow 初始化链路完成");
 
-        // v15 关键修复：MainWindow 初始化后自动 Show
-        // v14 之前用户必须手动点托盘菜单才看到主窗口。
-        // v15 自动 Show 让用户启动 host 后立即看到主窗口（截图即可）。
+        // v15：MainWindow 自动 Show
         try
         {
             _mainWindow?.Show();
@@ -106,27 +110,12 @@ public sealed class WebView2Host : IDisposable
         _mainWindow.NavigateToRoute(route);
     }
 
-    /// <summary>
-    /// 解析 WebView2 Runtime 目录（v5 关键修复）。
-    /// SDK CoreWebView2Environment.CreateAsync 第一参数语义是"目录"而非文件路径；
-    /// v3 修复版（commit 991cc02）误传 msedgewebview2.exe 文件路径，仍报 WebView2RuntimeNotFoundException。
-    ///
-    /// 优先级：
-    ///   1. HKLM\SOFTWARE\Microsoft\EdgeWebView\BLBeacon（64-bit 视图）
-    ///   2. HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeWebView\BLBeacon（32-bit 视图）
-    ///   3. HKLM\SOFTWARE\Microsoft\EdgeUpdate\ClientState\{GUID}\pv（64-bit 视图）
-    ///   4. HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\ClientState\{GUID}\pv（32-bit 视图）
-    ///   5. 枚举 ProgramFilesX86\Microsoft\EdgeWebView\Application，按版本号字符串倒序找第一个含 msedgewebview2.exe 的目录（兜底，不依赖注册表）
-    ///
-    /// 返回 null 时调用方走 SDK 自动查找（已知在 64 位进程 + 64 位视图 pv 不同步时会失败）。
-    /// </summary>
     private static string? ResolveWebView2RuntimeFolder()
     {
         const string AppSubpath = @"Microsoft\EdgeWebView\Application";
         var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         var appRoot = Path.Combine(programFilesX86, AppSubpath);
 
-        // 步骤 1-4：注册表读版本号
         var version = TryReadVersionFromRegistry();
         if (!string.IsNullOrEmpty(version))
         {
@@ -137,7 +126,6 @@ public sealed class WebView2Host : IDisposable
             }
         }
 
-        // 步骤 5：枚举 Application 目录（兜底，不依赖注册表）
         if (Directory.Exists(appRoot))
         {
             var candidates = Directory.EnumerateDirectories(appRoot)
@@ -156,14 +144,12 @@ public sealed class WebView2Host : IDisposable
 
     private static string? TryReadVersionFromRegistry()
     {
-        // BLBeacon 优先（WebView2 Runtime 安装器写入的）
         const string blBeacon = @"SOFTWARE\Microsoft\EdgeWebView";
         if (ReadRegistryValue(blBeacon, "BLBeacon", RegistryView.Registry64) is { } v64Beacon)
             return v64Beacon;
         if (ReadRegistryValue(blBeacon, "BLBeacon", RegistryView.Registry32) is { } v32Beacon)
             return v32Beacon;
 
-        // ClientState pv 兜底（EdgeUpdate 服务写入的）
         const string clientState = @"SOFTWARE\Microsoft\EdgeUpdate\ClientState\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
         if (ReadRegistryValue(clientState, "pv", RegistryView.Registry64) is { } v64Pv)
             return v64Pv;
