@@ -15,13 +15,18 @@ import react from '@vitejs/plugin-react';
 // v18.5 实测：dist/index.html 输出 `./assets/index-Xchg7aiY.js`，host 跑后收不到任何
 // WebMessageReceived（前端没 mount + postMessage 没发），确认根因是资源加载失败。
 //
-// v18.6 改 base 为空字符串：
-// - HTML 输出 <script src="assets/index-Xchg7aiY.js">
-// - 在 https://flowring.local/index.html 加载 → 相对路径自动解析为
+// v18.6 改 base 为绝对路径 '/':
+// - HTML 输出 <script src="/assets/index-Xchg7aiY.js">
+// - 在 https://flowring.local/index.html 加载 → 绝对路径自动解析为
 //   https://flowring.local/assets/index-Xchg7aiY.js
 // - JS bundle 加载成功 → React mount → postState 触发 → host WebMessageReceived 看到 'app.mount'
+//
+// 为什么不用 base='' (空字符串)：
+// - vite v6.4.3 实测 base='' 仍输出 './assets/...' 相对路径（不是裸路径）
+// - WebView2 SetVirtualHostNameToFolderMapping 后 `./` 相对路径可能 404
+// - base='/' 输出绝对路径，HTML 加载时自动按 origin 解析为 https://flowring.local/assets/...
 export default defineConfig({
-  base: '',
+  base: '/',
   plugins: [react()],
   build: {
     outDir: 'dist',
