@@ -2,6 +2,7 @@ using System.IO;
 using FlowRing.DesktopHost.UI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
 
 namespace FlowRing.DesktopHost.Host;
@@ -36,10 +37,24 @@ public sealed class WebView2Host : IDisposable
             "WebView2");
         Directory.CreateDirectory(webView2Dir);
 
-        // 2. 创建 Environment（失败则走暂停路径）
+        // 2. 显式解析 Runtime 路径（从注册表 BLBeacon 读版本号）
+        var browserPath = ResolveWebView2RuntimePath();
+        _logger.LogInformation("前端 dist 路径：{Path}", ResolveFrontendDistPath());
+        if (!string.IsNullOrEmpty(browserPath))
+        {
+            _logger.LogInformation("WebView2 Runtime 显式路径：{Path}", browserPath);
+        }
+        else
+        {
+            _logger.LogWarning("无法从注册表解析 Runtime 路径，将让 SDK 自动查找（可能失败）");
+        }
+
+        // 3. 创建 Environment（失败则走暂停路径）
         try
         {
-            _environment = await CoreWebView2Environment.CreateAsync(webView2Dir);
+            _environment = !string.IsNullOrEmpty(browserPath)
+                ? await CoreWebView2Environment.CreateAsync(browserPath, webView2Dir)
+                : await CoreWebView2Environment.CreateAsync(webView2Dir);
             _logger.LogInformation("WebView2Environment 创建完成（user data: {Dir}）", webView2Dir);
         }
         catch (Exception ex) when (IsMissingRuntime(ex))
@@ -49,11 +64,10 @@ public sealed class WebView2Host : IDisposable
             return;
         }
 
-        // 3. 解析前端 dist 路径
+        // 4. 解析前端 dist 路径
         var frontendDistPath = ResolveFrontendDistPath();
-        _logger.LogInformation("前端 dist 路径：{Path}", frontendDistPath);
 
-        // 4. 实例化 MainWindow（不 Show，等用户点菜单再 Show）
+        // 5. 实例化 MainWindow（不 Show，等用户点菜单再 Show）
         _mainWindow = new MainWindow(_controller);
         try
         {
@@ -76,6 +90,44 @@ public sealed class WebView2Host : IDisposable
             return;
         }
         _mainWindow.NavigateToRoute(route);
+    }
+
+    /// <summary>
+    /// 从注册表 BLBeacon 读 WebView2 Runtime 版本号，拼出 msedgewebview2.exe 完整路径。
+    /// 同时尝试 64-bit 视图（HKLM\SOFTWARE\Microsoft）和 32-bit 兼容视图（WOW6432Node）。
+    /// </summary>
+    private static string? ResolveWebView2RuntimePath()
+    {
+        string? version = null;
+        try
+        {
+            using (var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\EdgeWebView"))
+            {
+                if (key?.GetValue("BLBeacon") is string v64 && !string.IsNullOrEmpty(v64))
+                {
+                    version = v64;
+                }
+            }
+            if (version is null)
+            {
+                using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Microsoft\EdgeWebView");
+                if (key?.GetValue("BLBeacon") is string v32 && !string.IsNullOrEmpty(v32))
+                {
+                    version = v32;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+        if (version is null)
+        {
+            return null;
+        }
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var path = Path.Combine(programFilesX86, "Microsoft", "EdgeWebView", "Application", version, "msedgewebview2.exe");
+        return File.Exists(path) ? path : null;
     }
 
     private static string ResolveFrontendDistPath()
