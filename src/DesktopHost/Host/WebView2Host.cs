@@ -9,6 +9,8 @@ namespace FlowRing.DesktopHost.Host;
 
 /// <summary>
 /// WebView2 宿主：创建 Environment + 实例化 MainWindow + 暴露 NavigateTo。
+/// v5 修复：ResolveWebView2RuntimePath → ResolveWebView2RuntimeFolder，返回 folder 路径而非 exe 路径；
+/// 注册表显式读 64-bit + 32-bit 两个视图；加 Application 目录枚举兜底（不依赖注册表）。
 /// </summary>
 public sealed class WebView2Host : IDisposable
 {
@@ -30,30 +32,26 @@ public sealed class WebView2Host : IDisposable
     {
         if (IsInitialized) return;
 
-        // 1. 创建 WebView2 user data 目录
         var webView2Dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "FlowRing",
-            "WebView2");
+            "FlowRing", "WebView2");
         Directory.CreateDirectory(webView2Dir);
 
-        // 2. 显式解析 Runtime 路径（从注册表 BLBeacon 读版本号）
-        var browserPath = ResolveWebView2RuntimePath();
-        _logger.LogInformation("前端 dist 路径：{Path}", ResolveFrontendDistPath());
-        if (!string.IsNullOrEmpty(browserPath))
+        // 关键修复（v5）：folder 路径 + 不依赖 SDK 自动查找
+        var browserFolder = ResolveWebView2RuntimeFolder();
+        if (!string.IsNullOrEmpty(browserFolder))
         {
-            _logger.LogInformation("WebView2 Runtime 显式路径：{Path}", browserPath);
+            _logger.LogInformation("WebView2 Runtime folder: {Path}", browserFolder);
         }
         else
         {
-            _logger.LogWarning("无法从注册表解析 Runtime 路径，将让 SDK 自动查找（可能失败）");
+            _logger.LogWarning("无法解析 Runtime folder，将让 SDK 自动查找（用户机器上几乎必定失败）");
         }
 
-        // 3. 创建 Environment（失败则走暂停路径）
         try
         {
-            _environment = !string.IsNullOrEmpty(browserPath)
-                ? await CoreWebView2Environment.CreateAsync(browserPath, webView2Dir)
+            _environment = !string.IsNullOrEmpty(browserFolder)
+                ? await CoreWebView2Environment.CreateAsync(browserFolder, webView2Dir)
                 : await CoreWebView2Environment.CreateAsync(webView2Dir);
             _logger.LogInformation("WebView2Environment 创建完成（user data: {Dir}）", webView2Dir);
         }
@@ -64,10 +62,11 @@ public sealed class WebView2Host : IDisposable
             return;
         }
 
-        // 4. 解析前端 dist 路径
+        // 解析前端 dist 路径
         var frontendDistPath = ResolveFrontendDistPath();
+        _logger.LogInformation("前端 dist 路径：{Path}", frontendDistPath);
 
-        // 5. 实例化 MainWindow（不 Show，等用户点菜单再 Show）
+        // 实例化 MainWindow（不 Show，等用户点菜单再 Show）
         _mainWindow = new MainWindow(_controller);
         try
         {
@@ -93,54 +92,91 @@ public sealed class WebView2Host : IDisposable
     }
 
     /// <summary>
-    /// 从注册表 BLBeacon 读 WebView2 Runtime 版本号，拼出 msedgewebview2.exe 完整路径。
-    /// 同时尝试 64-bit 视图（HKLM\SOFTWARE\Microsoft）和 32-bit 兼容视图（WOW6432Node）。
+    /// 解析 WebView2 Runtime 目录（v5 关键修复）。
+    /// SDK CoreWebView2Environment.CreateAsync 第一参数语义是"目录"而非文件路径；
+    /// v3 修复版（commit 991cc02）误传 msedgewebview2.exe 文件路径，仍报 WebView2RuntimeNotFoundException。
+    ///
+    /// 优先级：
+    ///   1. HKLM\SOFTWARE\Microsoft\EdgeWebView\BLBeacon（64-bit 视图）
+    ///   2. HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeWebView\BLBeacon（32-bit 视图）
+    ///   3. HKLM\SOFTWARE\Microsoft\EdgeUpdate\ClientState\{GUID}\pv（64-bit 视图）
+    ///   4. HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\ClientState\{GUID}\pv（32-bit 视图）
+    ///   5. 枚举 ProgramFilesX86\Microsoft\EdgeWebView\Application，按版本号字符串倒序找第一个含 msedgewebview2.exe 的目录（兜底，不依赖注册表）
+    ///
+    /// 返回 null 时调用方走 SDK 自动查找（已知在 64 位进程 + 64 位视图 pv 不同步时会失败）。
     /// </summary>
-    private static string? ResolveWebView2RuntimePath()
+    private static string? ResolveWebView2RuntimeFolder()
     {
-        string? version = null;
+        const string AppSubpath = @"Microsoft\EdgeWebView\Application";
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var appRoot = Path.Combine(programFilesX86, AppSubpath);
+
+        // 步骤 1-4：注册表读版本号
+        var version = TryReadVersionFromRegistry();
+        if (!string.IsNullOrEmpty(version))
+        {
+            var folder = Path.Combine(appRoot, version);
+            if (Directory.Exists(folder) && File.Exists(Path.Combine(folder, "msedgewebview2.exe")))
+            {
+                return folder;
+            }
+        }
+
+        // 步骤 5：枚举 Application 目录（兜底，不依赖注册表）
+        if (Directory.Exists(appRoot))
+        {
+            var candidates = Directory.EnumerateDirectories(appRoot)
+                .Select(d => new DirectoryInfo(d))
+                .Where(d => File.Exists(Path.Combine(d.FullName, "msedgewebview2.exe")))
+                .OrderByDescending(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (candidates.Count > 0)
+            {
+                return candidates[0].FullName;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryReadVersionFromRegistry()
+    {
+        // BLBeacon 优先（WebView2 Runtime 安装器写入的）
+        const string blBeacon = @"SOFTWARE\Microsoft\EdgeWebView";
+        if (ReadRegistryValue(blBeacon, "BLBeacon", RegistryView.Registry64) is { } v64Beacon)
+            return v64Beacon;
+        if (ReadRegistryValue(blBeacon, "BLBeacon", RegistryView.Registry32) is { } v32Beacon)
+            return v32Beacon;
+
+        // ClientState pv 兜底（EdgeUpdate 服务写入的）
+        const string clientState = @"SOFTWARE\Microsoft\EdgeUpdate\ClientState\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+        if (ReadRegistryValue(clientState, "pv", RegistryView.Registry64) is { } v64Pv)
+            return v64Pv;
+        if (ReadRegistryValue(clientState, "pv", RegistryView.Registry32) is { } v32Pv)
+            return v32Pv;
+
+        return null;
+    }
+
+    private static string? ReadRegistryValue(string subKey, string valueName, RegistryView view)
+    {
         try
         {
-            using (var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\EdgeWebView"))
-            {
-                if (key?.GetValue("BLBeacon") is string v64 && !string.IsNullOrEmpty(v64))
-                {
-                    version = v64;
-                }
-            }
-            if (version is null)
-            {
-                using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Microsoft\EdgeWebView");
-                if (key?.GetValue("BLBeacon") is string v32 && !string.IsNullOrEmpty(v32))
-                {
-                    version = v32;
-                }
-            }
+            using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view).OpenSubKey(subKey);
+            return key?.GetValue(valueName) as string;
         }
-        catch (Exception)
+        catch
         {
             return null;
         }
-        if (version is null)
-        {
-            return null;
-        }
-        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        var path = Path.Combine(programFilesX86, "Microsoft", "EdgeWebView", "Application", version, "msedgewebview2.exe");
-        return File.Exists(path) ? path : null;
     }
 
     private static string ResolveFrontendDistPath()
     {
-        // 优先按 cwd 向上找（dotnet run 时）
         var cwd = Directory.GetCurrentDirectory();
         var byCwd = Path.GetFullPath(Path.Combine(cwd, "packages", "web", "dist"));
-        if (Directory.Exists(byCwd))
-        {
-            return byCwd;
-        }
+        if (Directory.Exists(byCwd)) return byCwd;
 
-        // 否则按 BaseDirectory 向上找（dotnet publish 后）
         var baseDir = AppContext.BaseDirectory;
         var byBase = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..",
             "packages", "web", "dist"));
