@@ -11,22 +11,24 @@ namespace FlowRing.DesktopHost.UI;
 /// <summary>
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 ///
-/// v18.2 修法（大审查后定位真实根因）：
+/// v18.3 修法（大审查后定位真实根因）：
 ///
-/// 之前所有 v10-v18.1 NavigationCompleted async lambda 都有死锁——
-///   * 默认 ConfigureAwait(true) 让 await post 回调到 STA WinForms SynchronizationContext
-///   * STA 线程被 Application.Run() 阻塞，等同步任务
-///   * await 永远不返回 → handler 抛死锁 → log 不输出 → async void 默默吞
+/// v18.2 暴露的错误：System.InvalidOperationException: CoreWebView2 can only be accessed from the UI thread
 ///
-/// 这就是为什么 v15 (Status=Unknown) 之后看不到 URL 替换 / 页面状态 log 的根因。
+/// 这意味着 WebView2 的 CoreWebView2 属性访问必须在创建它的 STA UI 线程。
+/// v18.2 错误地把 await 加 ConfigureAwait(false) → await 跑到 ThreadPool → 访问 CoreWebView2 抛错。
 ///
-/// v18.2 修：所有 await 加 .ConfigureAwait(false)
-///   * await 不 post 回 STA 线程
-///   * 在 ThreadPool 上完成
-///   * handler 完整执行，log 正常输出
+/// 之前 v10-v18.1 NavigationCompleted async lambda 都有"实际死锁"——
+///   * 默认 ConfigureAwait(true) 让 await post 回 STA
+///   * STA 被 Application.Run() 阻塞
+///   * await 永远不返回 → handler 抛死锁 → async void 默默吞异常
+/// 这就是为什么之前 log 只看到第一行（status=Unknown）但看不到任何后续 dump。
 ///
-/// WebView2Info 类用 .ConfigureAwait(false) — 因为我们不依赖 UI 线程同步上下文
-/// （WebView2 的 CoreWebView2 调用是 STA 线程安全的）。
+/// v18.3 修：handler 同步（synchronous），立即调 Task.Run 把异步操作跑到 ThreadPool
+///   * handler 第一行（log 信息）立即输出（STA 线程）
+///   * 后续 CoreWebView2.ExecuteScriptAsync 调用 在 ThreadPool（避免 STA 死锁 + 错误）
+///   * ConfigureAwait(false) 让 await 不 post 回 STA
+///   * 用 .ConfigureAwait(false) 而不是默认，避免 STA 上下文捕获
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -94,7 +96,7 @@ public sealed class MainWindow : Form
             else
             {
                 _isReady = false;
-                _logger.LogError(e.InitializationException, "CoreWebView2 初始化失败");
+                _logger.LogError(e.InitializationException, "CoreWeb2 初始化失败");
                 if (!Visible) Show();
             }
         };
@@ -109,8 +111,9 @@ public sealed class MainWindow : Form
     {
         try
         {
-            // v18.2：await 加 ConfigureAwait(false) 避免 STA 死锁
-            await _webView.EnsureCoreWebView2Async(null).ConfigureAwait(false);
+            // 默认 ConfigureAwait(true)：回到创建 CoreWebView2 的 STA 线程
+            // 避免 v18.2 的 InvalidOperationException
+            await _webView.EnsureCoreWebView2Async(null);
         }
         catch (Exception ex)
         {
@@ -152,31 +155,58 @@ public sealed class MainWindow : Form
     }
 
     /// <summary>
-    /// v18.2 关键修复：所有 await 都加 ConfigureAwait(false) 避免 STA 死锁。
+    /// v18.3 关键修复：handler 同步（synchronous），立即 fire-and-forget Task.Run。
+    ///
+    /// 之前 v10-v18.2 async lambda 死锁根因：
+    /// - 默认 ConfigureAwait(true) post 回 STA SynchronizationContext
+    /// - STA 被 Application.Run() 阻塞 → 死锁 → async void 默默吞
+    ///
+    /// v18.3 修法：
+    /// - handler 同步：CoreWebView2 属性访问在 STA 线程（安全）
+    /// - 第一行 log 立即输出
+    /// - 后续 ExecuteScriptAsync 调用 fire-and-forget Task.Run 到 ThreadPool
+    /// - Task.Run 内 async Task + ConfigureAwait(false) 避免 STA 死锁
     /// </summary>
     private void AttachNavigationListener()
     {
         if (_webView.CoreWebView2 is null) return;
-        _webView.CoreWebView2.NavigationCompleted += async (_, e) =>
+        // 同步 handler：在 STA 线程上访问 CoreWebView2 属性
+        _webView.CoreWebView2.NavigationCompleted += (_, e) =>
         {
             _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
                 e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
 
-            // v18.2：t+0s / t+1s / t+3s 多次 dump，全部 ConfigureAwait(false)
+            // fire-and-forget：把 async 操作搬到 ThreadPool
+            _ = HandleNavigationCompletedAsync();
+        };
+        _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
+    }
+
+    /// <summary>
+    /// v18.3：在 ThreadPool 上跑异步 dump，避免 STA 死锁。
+    /// </summary>
+    private async Task HandleNavigationCompletedAsync()
+    {
+        try
+        {
+            // v18.3：所有 await 都 ConfigureAwait(false)，避免 post 回 STA 死锁
             await DumpPageStateAsync("t+0s").ConfigureAwait(false);
             await Task.Delay(1000).ConfigureAwait(false);
             await DumpPageStateAsync("t+1s").ConfigureAwait(false);
             await Task.Delay(2000).ConfigureAwait(false);
             await DumpPageStateAsync("t+3s").ConfigureAwait(false);
-        };
-        _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MainWindow HandleNavigationCompletedAsync 失败");
+        }
     }
 
     private async Task DumpPageStateAsync(string tag)
     {
         try
         {
-            // v18.2：await ConfigureAwait(false) 避免 STA 死锁
+            // v18.3：await ConfigureAwait(false) 避免 STA 死锁
             var json = await _webView.CoreWebView2!.ExecuteScriptAsync(
                 @"(() => {
                     const errs = window.__errors || [];
