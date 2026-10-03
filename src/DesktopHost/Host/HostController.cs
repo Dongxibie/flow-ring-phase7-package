@@ -169,7 +169,7 @@ public sealed class HostController : IDisposable
         {
             return;
         }
-        _ringOverlay = new RingOverlayForm(this, _loggerFactory);
+        _ringOverlay = new RingOverlayForm(this, _loggerFactory, _webView2.FrontendDist);
         _logger.LogInformation("快捷环弹窗已创建（隐藏预加载）");
     }
 

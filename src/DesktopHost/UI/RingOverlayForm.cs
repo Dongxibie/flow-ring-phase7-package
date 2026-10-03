@@ -17,13 +17,17 @@ public sealed class RingOverlayForm : Form
 {
     private const int GripRadius = 28;
 
+    private const string VirtualHost = "flowring.local";
+
     private readonly HostController _controller;
+    private readonly string _frontendDist;
     private readonly ILogger<RingOverlayForm> _logger;
     private readonly WebView2 _webView = new();
 
-    public RingOverlayForm(HostController controller, ILoggerFactory? loggerFactory = null)
+    public RingOverlayForm(HostController controller, ILoggerFactory? loggerFactory = null, string? frontendDist = null)
     {
         _controller = controller;
+        _frontendDist = frontendDist ?? string.Empty;
         _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RingOverlayForm>();
 
         Text = "Flow Ring — 快捷环";
@@ -48,9 +52,16 @@ public sealed class RingOverlayForm : Form
             }
             _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+            // v22.1 修复：弹窗是独立的 CoreWebView2 实例，虚拟主机映射必须自己配一份，
+            // 否则 flowring.local 无法解析 → "无法访问此页面"
+            if (!string.IsNullOrEmpty(_frontendDist))
+            {
+                _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    VirtualHost, _frontendDist, CoreWebView2HostResourceAccessKind.Allow);
+            }
             _webView.CoreWebView2.WebMessageReceived += OnWebMessage;
-            _webView.CoreWebView2.Navigate("https://flowring.local/index.html#overlay");
-            _logger.LogInformation("快捷环 WebView2 已就绪并导航到 #overlay");
+            _webView.CoreWebView2.Navigate($"https://{VirtualHost}/index.html#overlay");
+            _logger.LogInformation("快捷环 WebView2 已就绪并导航到 #overlay（dist={Dist}）", _frontendDist);
         };
 
         Deactivate += (_, _) =>
