@@ -7,6 +7,8 @@ import { useBridge } from '../bridge/useBridge';
 import { loadSlots } from '../slotStore';
 import { EIGHT_DIRECTIONS } from './SegmentedRing';
 import { postHost, isPopupMode } from '../hostLink';
+import { resolveAction } from '../actions';
+import { loadActiveProfileId } from '../profileStore';
 
 // v20.1：右键唤起的运行时形态——只有单纯的圆环，功能标注在扇区里，
 // 没有任何环外杂物。单击扇区 = 触发（MVP 仅关闭并回传日志）；ESC / 右键 / 点空白关闭。
@@ -19,7 +21,7 @@ export function OverlayRing({ onClose }: { onClose: () => void }): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    void bridge.loadStudio('default').then(({ ringGraphJson }: { ringGraphJson: string }) => {
+    void bridge.loadStudio(loadActiveProfileId()).then(({ ringGraphJson }: { ringGraphJson: string }) => {
       if (cancelled) {
         return;
       }
@@ -64,11 +66,12 @@ export function OverlayRing({ onClose }: { onClose: () => void }): JSX.Element {
   // v21：单击扇区 = 真执行。ACTION_TRIGGER → host ActionDispatcher（SendInput / 启终端 / 打开主界面）。
   const trigger = (dir: string): void => {
     const slot = slots[dir];
-    const code = slot?.kind === 'action' ? slot.actionRef : undefined;
-    const label = code ? actionName(code, lang) : t('空槽位', 'Empty');
+    const ref = slot?.kind === 'action' ? slot.actionRef : undefined;
+    const resolved = ref ? resolveAction(ref) : null;
+    const label = ref ? actionName(ref, lang) : t('空槽位', 'Empty');
     setFlash(t(`已触发：${label}`, `Triggered: ${label}`));
-    if (code) {
-      postHost('ACTION_TRIGGER', { code });
+    if (resolved) {
+      postHost('ACTION_TRIGGER', { code: resolved.code, arg: resolved.arg });
     }
     window.setTimeout(() => {
       if (isPopupMode()) {

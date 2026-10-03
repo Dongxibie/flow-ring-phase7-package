@@ -196,10 +196,11 @@ public sealed class MainWindow : Form
             if (type == "ACTION_TRIGGER")
             {
                 var code = root.TryGetProperty("code", out var c) ? c.GetString() : null;
+                var arg = root.TryGetProperty("arg", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.String ? a.GetString() : null;
                 if (!string.IsNullOrEmpty(code))
                 {
                     _logger.LogInformation("收到动作触发：{Code}", code);
-                    _ = _controller.ExecuteActionAsync(code);
+                    _ = _controller.ExecuteActionAsync(code, arg);
                 }
                 return;
             }

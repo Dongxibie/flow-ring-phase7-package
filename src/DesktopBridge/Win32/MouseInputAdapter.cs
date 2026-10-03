@@ -111,21 +111,25 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
 
     private nint HookCallback(int nCode, nint wParam, nint lParam)
     {
+        var swallow = false;
         try
         {
             if (nCode >= 0)
             {
-                ProcessMouseMessage(wParam, lParam);
+                swallow = ProcessMouseMessage(wParam, lParam);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Hook 回调异常");
         }
-        return NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+        // v22：侧键整段吞掉（不作浏览器前进/后退）；长按触发后的右键抬起也吞掉，
+        // 避免底层应用弹出右键菜单与快捷环叠影
+        return swallow ? 1 : NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
     }
 
-    private void ProcessMouseMessage(nint wParam, nint lParam)
+    /// <returns>true = 吞掉该事件，不传给底层应用。</returns>
+    private bool ProcessMouseMessage(nint wParam, nint lParam)
     {
         var msg = (int)wParam;
         var raw = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
@@ -136,23 +140,30 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         {
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 1:
                 OnButtonDown(NativeMethods.VK_XBUTTON1, raw.pt, raw.time);
-                break;
+                return true; // 侧键保留给 Flow Ring
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 2:
                 OnButtonDown(NativeMethods.VK_XBUTTON2, raw.pt, raw.time);
-                break;
+                return true;
             case NativeMethods.WM_MBUTTONDOWN:
                 OnButtonDown(NativeMethods.VK_MBUTTON, raw.pt, raw.time);
-                break;
+                return false;
             case NativeMethods.WM_RBUTTONDOWN:
                 OnButtonDown(NativeMethods.VK_RBUTTON, raw.pt, raw.time);
-                break;
+                return false;
 
             case NativeMethods.WM_XBUTTONUP when _pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2:
-            case NativeMethods.WM_MBUTTONUP when _pressedButtonVk == NativeMethods.VK_MBUTTON:
-            case NativeMethods.WM_RBUTTONUP when _pressedButtonVk == NativeMethods.VK_RBUTTON:
                 OnButtonUp();
-                break;
+                return true;
+            case NativeMethods.WM_MBUTTONUP when _pressedButtonVk == NativeMethods.VK_MBUTTON:
+                OnButtonUp();
+                return false;
+            case NativeMethods.WM_RBUTTONUP when _pressedButtonVk == NativeMethods.VK_RBUTTON:
+                var swallowUp = _holdFired; // 长按已触发：吞掉抬起，防右键菜单
+                OnButtonUp();
+                return swallowUp;
         }
+
+        return false;
     }
 
     private void OnButtonDown(int vk, NativeMethods.POINT pt, uint rawTime)

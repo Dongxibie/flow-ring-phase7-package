@@ -52,6 +52,7 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
   const r = p.size / 2;
   const ri = Math.round(r * 0.56); // 内圈半径（与 500/140 同比例）
   const lr = (r + ri) / 2; // 标注所在的中带半径
+  const bandLen = r - ri; // 环带厚度（辐条/空槽位中线长度）
   const glassAlpha = (0.14 * p.opacity).toFixed(3);
   const mask = ANNULUS(ri);
   const [hover, setHover] = useState<string | null>(null);
@@ -61,22 +62,14 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
     <div className="ringwrap">
       <div className="ring" style={{ left: -r, top: -r, width: p.size, height: p.size }}>
         <div className="rg rg-glass" style={{ background: `rgba(255,255,255,${glassAlpha})`, ...mask }} />
-        <div
-          className="rg rg-cuts"
-          style={{
-            background: `repeating-conic-gradient(from -1.6deg, ${p.bgColor} 0deg 3.2deg, transparent 3.2deg 45deg)`,
-            ...mask,
-          }}
-        />
         {p.selected !== null && (
           <div className="rg rg-active" style={{ clipPath: WEDGE[p.selected], ...mask }} />
         )}
-        {/* v21.1：径向竖线——8 条边界辐条，把环明显切成八块 */}
+        {/* v22：径向竖线切 8 块——8 条边界辐条始终可见 */}
         {[-22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5].map((deg) => {
           const rad = (deg * Math.PI) / 180;
           const mx = Math.cos(rad) * lr;
           const my = Math.sin(rad) * lr;
-          const len = r - ri;
           return (
             <div
               key={'spoke-' + deg}
@@ -84,8 +77,8 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
               style={{
                 // .ring 自身偏移在 (-r,-r)，子元素坐标需以环左上角为原点：+r
                 left: r + mx - 1,
-                top: r + my - len / 2,
-                height: len,
+                top: r + my - bandLen / 2,
+                height: bandLen,
                 transform: `rotate(${deg}deg)`,
               }}
             />
@@ -132,6 +125,17 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
                 <i className="sd lm" /><i className="sd rm" />
                 <i className="sd bl" /><i className="sd bm" /><i className="sd br" />
               </div>
+            )}
+            {!info && slot?.kind !== 'childRing' && (
+              <div
+                className="spoke mid"
+                style={{
+                  left: r + Math.cos(rad) * lr - 0.5,
+                  top: r + Math.sin(rad) * lr - bandLen / 2,
+                  height: bandLen,
+                  transform: `rotate(${a}deg)`,
+                }}
+              />
             )}
             <span className={'snm' + (info ? '' : ' empty')}>
               {info
