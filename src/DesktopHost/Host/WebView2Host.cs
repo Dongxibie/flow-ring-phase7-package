@@ -28,6 +28,9 @@ public sealed class WebView2Host : IDisposable
     public bool IsInitialized { get; private set; }
     public MainWindow? MainWindow => _mainWindow;
 
+    /// <summary>v22.1：前端 dist 路径（快捷环弹窗的虚拟主机映射需要同一份）。</summary>
+    public string FrontendDist { get; private set; } = string.Empty;
+
     /// <summary>v21：MainWindow UI 线程就绪（CoreWebView2 初始化完成）后触发。</summary>
     public event EventHandler? UiReady;
 
@@ -85,6 +88,7 @@ public sealed class WebView2Host : IDisposable
 
         // 解析前端 dist 路径
         var frontendDistPath = ResolveFrontendDistPath();
+        FrontendDist = frontendDistPath;
         _logger.LogInformation("前端 dist 路径：{Path}", frontendDistPath);
 
         // v16 关键修复：实例化 MainWindow 时传 loggerFactory
