@@ -7,24 +7,28 @@ import { RingStudioPage } from './pages/RingStudio/RingStudioPage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { FlowCodePage } from './pages/FlowCode/FlowCodePage';
 
-// v11 修法：children catch-all path '*' 兜底，让任意路径都能渲染 Page
+// v12 修法：回退 v11 嵌套 catch-all，改用 v9 风格 path '/' 父路由
 //
-// v10 修法回顾：
-// - 顶层 path: '*' catch-all + Layout element
-// - children 路径：index + 'studio' + 'profiles' + 'flow-code' + 'settings'
-// - WebView2 Navigate 到 https://flowring.local/index.html → HTML 加载成功
-// - 顶层 catch-all 匹配 → Layout 渲染 → 顶部 NavLink + Outlet
-// - 但 children index 路径是父 '*' + '/'（即 '*'），实际路径 '/index.html' 不匹配
-// - 实际行为：Layout 渲染成功 + Outlet 不渲染 → 主窗口顶部 OK，主体空白
+// v11 失败（实测用户白屏）：
+// - 顶层 path: '*' catch-all + children 含 path: '*' catch-all（嵌套 catch-all）
+// - React Router v6 nested catch-all 行为异常：父子两层都吃 '*'，路径匹配优先级冲突
+// - 实测结果：连顶层 Layout 都不渲染（之前 v10 顶部 OK 都丢了）→ 回到初始白屏
 //
-// v11 修：children 末尾加 path: '*' catch-all
-// - 任意不匹配的路径（如 /index.html、/index.html#studio 等）都进 catch-all child
-// - 默认渲染 ProfileManagerPage（最常用页面）
-// - 显式路径（/studio、/profiles、/flow-code、/settings）优先匹配各自子路由
-// - 不依赖 host 端 URL 替换，纯粹前端路由修复
+// v12 修：去掉嵌套 catch-all，回退到 v9 风格
+// - 顶层 path: '/' 父路由 + Layout element
+// - children index + 4 个具体路径子路由（studio / profiles / flow-code / settings）
+// - 让 v12 一定渲染：哪怕 children 都不匹配，Layout 顶部仍渲染（保证不退化到白屏）
+//
+// 配合 host 端：NavigationCompleted 后 ExecuteScriptAsync 把 URL 改 '/'
+// - /index.html 加载后立即 history.replaceState({}, '', '/') + 触发 popstate
+// - React Router 看到路径 '/' 匹配 path '/' 父 → children index 渲染 ProfileManagerPage
+//
+// 预期：
+// - v11 实测白屏：✅ 修复回 v10 状态（顶部 Layout 渲染 + Outlet 渲染 ProfileManagerPage）
+// - 主体：ProfileManagerPage 完整渲染（"Profile 管理" + "+ 新建 Profile" + Profile 卡片列表）
 const routes: RouteObject[] = [
   {
-    path: '*',
+    path: '/',
     element: <Layout />,
     children: [
       { index: true, element: <ProfileManagerPage /> },
@@ -32,7 +36,6 @@ const routes: RouteObject[] = [
       { path: 'profiles', element: <ProfileManagerPage /> },
       { path: 'flow-code', element: <FlowCodePage /> },
       { path: 'settings', element: <SettingsPage /> },
-      { path: '*', element: <ProfileManagerPage /> },
     ],
   },
 ];

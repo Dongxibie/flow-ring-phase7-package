@@ -11,17 +11,11 @@ namespace FlowRing.DesktopHost.UI;
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 /// 关闭按钮只 Hide（不退出 host），退出走托盘菜单。
 ///
-/// v10 大修复（一次性）：
-/// 1. WebView2 Navigate URL 改回 https://flowring.local/index.html（v9 改 '/' 失败 → ERR_ACCESS_DENIED）
-///    SDK 1.0.2651.64 SetVirtualHostNameToFolderMapping 没 defaultDocument 重载（reflection 验证），
-///    WebView2 不会自动 fallback 到 index.html
-/// 2. main.tsx 改 path '*' catch-all（v10 commit 268de9cb）+ Layout element + children 相对路径
-///    让任何路径（包括 /index.html、/studio 等）都进 Layout
-/// 3. NavigationCompleted 后注入 JS 拿 {url, title, bodyText.slice, hasLayout, hasHeader} 把结果 log
-///
-/// v9 → v10 调整：
-/// - v9 Navigate https://flowring.local/ → ERR_ACCESS_DENIED（实测）
-/// - v10 Navigate https://flowring.local/index.html + main.tsx catch-all → 任意路径进 Layout
+/// v12 修法（前端 + host 双轨）：
+/// 1. main.tsx 回退 v9 风格 path '/' 父路由 + children index（v12 commit 1c9a812b）
+///    v11 嵌套 catch-all 实测破坏 Layout 渲染
+/// 2. host 端：NavigationCompleted 后 ExecuteScriptAsync 把 /index.html 改 /
+///    React Router 看到路径 '/' → 匹配 path '/' 父 → Layout 渲染 + children index ProfileManagerPage
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -123,7 +117,6 @@ public sealed class MainWindow : Form
             return;
         }
 
-        // v10：Navigate 到 https://flowring.local/index.html（确保 HTML 加载成功）
         _pendingNavigationUri = IndexUrl;
         _pendingFrontendDist = frontendDistPath;
 
@@ -151,7 +144,10 @@ public sealed class MainWindow : Form
     }
 
     /// <summary>
-    /// v10 诊断：NavigationCompleted 后注入 JS 拿页面真实状态（url/title/bodyText/hasLayout/hasHeader/rootChildren）。
+    /// v12 关键修复：NavigationCompleted 后：
+    /// 1. 用 history.replaceState 把 URL 改成 '/'（让 React Router 拿到正确路径）
+    /// 2. 触发 popstate 事件让 Router 重新解析
+    /// 3. 注入诊断 JS 拿页面状态
     /// </summary>
     private void AttachNavigationListener()
     {
@@ -160,6 +156,24 @@ public sealed class MainWindow : Form
         {
             _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
                 e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
+
+            // v12 关键：替换 URL 为 '/' 让 React Router 匹配 path '/' 父路由
+            try
+            {
+                var currentUrl = _webView.CoreWebView2.Source;
+                if (currentUrl.Contains("/index.html"))
+                {
+                    var replaceJs = "history.replaceState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate'));";
+                    await _webView.CoreWebView2.ExecuteScriptAsync(replaceJs);
+                    _logger.LogInformation("MainWindow URL 已替换：/index.html → /");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "MainWindow URL 替换失败");
+            }
+
+            // 诊断：拿页面真实状态
             try
             {
                 var js = @"JSON.stringify({
