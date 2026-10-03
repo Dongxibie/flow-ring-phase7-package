@@ -39,6 +39,12 @@ public sealed class WebView2Host : IDisposable
     {
         if (IsInitialized) return;
 
+        // v19 诊断：确认本方法跑在哪个线程（HostController.StartAsync 对本调用加了 ConfigureAwait(false)）
+        _logger.LogInformation(
+            "WebView2Host.InitializeAsync 进入（线程 {ThreadId}，apartment {Apt}）",
+            Environment.CurrentManagedThreadId,
+            Thread.CurrentThread.GetApartmentState());
+
         var webView2Dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "FlowRing", "WebView2");
@@ -61,6 +67,11 @@ public sealed class WebView2Host : IDisposable
                 ? await CoreWebView2Environment.CreateAsync(browserFolder, webView2Dir)
                 : await CoreWebView2Environment.CreateAsync(webView2Dir);
             _logger.LogInformation("WebView2Environment 创建完成（user data: {Dir}）", webView2Dir);
+            // v19 诊断：CreateAsync await 之后的续体在哪个线程？
+            _logger.LogInformation(
+                "CreateAsync 后续线程 {ThreadId}，apartment {Apt}",
+                Environment.CurrentManagedThreadId,
+                Thread.CurrentThread.GetApartmentState());
         }
         catch (Exception ex) when (IsMissingRuntime(ex))
         {

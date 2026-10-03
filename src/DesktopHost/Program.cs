@@ -20,6 +20,13 @@ internal static class Program
             })
             .SetMinimumLevel(LogLevel.Information));
 
+        // v19 诊断：记录 Main 线程的 ID 与 apartment 状态，用于对照后续所有 WebView2 相关回调的线程
+        var bootLogger = loggerFactory.CreateLogger("boot");
+        bootLogger.LogInformation(
+            "Main 线程 {ThreadId}，apartment {Apt}",
+            Environment.CurrentManagedThreadId,
+            Thread.CurrentThread.GetApartmentState());
+
         var controller = new HostController(loggerFactory);
         using var cts = new CancellationTokenSource();
         Application.ApplicationExit += (_, _) => cts.Cancel();
