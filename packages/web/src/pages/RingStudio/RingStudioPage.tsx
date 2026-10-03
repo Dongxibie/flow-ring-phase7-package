@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBridge } from '../../bridge/useBridge';
 
+// v20：环工作室改为"整环切割"形态（AI空间样例 09 视觉稿）——
+// 一整块磨砂玻璃圆环被切缝劈成八份，激活扇区用楔形 clip-path 点亮；
+// 动作名/快捷键作为水平标签挂在环外。拖拽指派、属性面板、保存链路原样保留。
 interface SlotViewModel {
   direction: string;
   kind: 'empty' | 'action' | 'childRing';
@@ -9,6 +12,48 @@ interface SlotViewModel {
 }
 
 const EIGHT_DIRECTIONS = ['Top', 'TopRight', 'Right', 'BottomRight', 'Bottom', 'BottomLeft', 'Left', 'TopLeft'];
+
+const DIR_CN: Record<string, string> = {
+  Top: '上', TopRight: '右上', Right: '右', BottomRight: '右下',
+  Bottom: '下', BottomLeft: '左下', Left: '左', TopLeft: '左上',
+};
+
+// 已知动作的展示名与快捷键；未知动作码原样显示
+const ACTION_INFO: Record<string, { name: string; key: string }> = {
+  'key-ctrl-shift-t': { name: '打开终端', key: 'Ctrl+Shift+T' },
+  'system-screenshot': { name: '截取屏幕', key: 'Win+Shift+S' },
+};
+
+// 楔形多边形：以"右"扇区为基准，屏幕坐标（y 向下）按 45° 旋转到各方向
+const WEDGE: Record<string, string> = {
+  Top: 'polygon(50% 50%, 32.1% 3.3%, 37.0% 1.7%, 42.2% 0.6%, 47.4% 0.1%, 52.6% 0.1%, 57.8% 0.6%, 63.0% 1.7%, 67.9% 3.3%)',
+  TopRight: 'polygon(50% 50%, 70.4% 4.3%, 75.0% 6.7%, 79.4% 9.6%, 83.4% 12.9%, 87.1% 16.6%, 90.4% 20.6%, 93.3% 25.0%, 95.7% 29.6%)',
+  Right: 'polygon(50% 50%, 96.7% 32.1%, 98.3% 37.0%, 99.4% 42.2%, 99.9% 47.4%, 99.9% 52.6%, 99.4% 57.8%, 98.3% 63.0%, 96.7% 67.9%)',
+  BottomRight: 'polygon(50% 50%, 95.7% 70.4%, 93.3% 75.0%, 90.4% 79.4%, 87.1% 83.4%, 83.4% 87.1%, 79.4% 90.4%, 75.0% 93.3%, 70.4% 95.7%)',
+  Bottom: 'polygon(50% 50%, 67.9% 96.7%, 63.0% 98.3%, 57.8% 99.4%, 52.6% 99.9%, 47.4% 99.9%, 42.2% 99.4%, 37.0% 98.3%, 32.1% 96.7%)',
+  BottomLeft: 'polygon(50% 50%, 29.6% 95.7%, 25.0% 93.3%, 20.6% 90.4%, 16.6% 87.1%, 12.9% 83.4%, 9.6% 79.4%, 6.7% 75.0%, 4.3% 70.4%)',
+  Left: 'polygon(50% 50%, 3.3% 67.9%, 1.7% 63.0%, 0.6% 57.8%, 0.1% 52.6%, 0.1% 47.4%, 0.6% 42.2%, 1.7% 37.0%, 3.3% 32.1%)',
+  TopLeft: 'polygon(50% 50%, 4.3% 29.6%, 6.7% 25.0%, 9.6% 20.6%, 12.9% 16.6%, 16.6% 12.9%, 20.6% 9.6%, 25.0% 6.7%, 29.6% 4.3%)',
+};
+
+// 标签位置：环外半径 300px 处
+const LABEL_POS: Record<string, { x: number; y: number }> = {
+  Top: { x: 0, y: -300 },
+  TopRight: { x: 212, y: -212 },
+  Right: { x: 300, y: 0 },
+  BottomRight: { x: 212, y: 212 },
+  Bottom: { x: 0, y: 300 },
+  BottomLeft: { x: -212, y: 212 },
+  Left: { x: -300, y: 0 },
+  TopLeft: { x: -212, y: -212 },
+};
+
+function actionInfo(ref?: string): { name: string; key: string } | null {
+  if (!ref) {
+    return null;
+  }
+  return ACTION_INFO[ref] ?? { name: ref, key: '' };
+}
 
 export function RingStudioPage(): JSX.Element {
   const bridge = useBridge();
@@ -50,7 +95,7 @@ export function RingStudioPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-    // v19 白屏根因修复：同 ProfileManagerPage，依赖收敛到稳定的方法引用
+    // v19 白屏修复口诀：依赖收敛到稳定方法引用
   }, [bridge.loadStudio, profileId]);
 
   const actionSlotCount = useMemo(
@@ -59,43 +104,12 @@ export function RingStudioPage(): JSX.Element {
   );
 
   return (
-    <section style={{ padding: '16px', display: 'grid', gridTemplateColumns: '240px 1fr 280px', gap: '16px', minHeight: '70vh' }}>
-      {/* 左栏：Action 库 */}
-      <aside style={{ borderRight: '1px solid var(--fr-border, #dadbe1)', paddingRight: '12px' }}>
-        <h3>Action 库</h3>
-        <ul style={{ listStyle: 'none', padding: 0 }}>
-          {actionLibrary.map((a) => (
-            <li
-              key={a}
-              style={{
-                border: '1px solid var(--fr-border, #dadbe1)',
-                borderRadius: '8px',
-                padding: '8px',
-                marginBottom: '6px',
-                cursor: 'grab',
-                fontFamily: 'monospace',
-              }}
-              draggable
-              onDragStart={(e) => e.dataTransfer.setData('text/plain', a)}
-            >
-              {a}
-            </li>
-          ))}
-        </ul>
-      </aside>
+    <div className="studio">
+      {error !== null && <p className="err">{error}</p>}
 
-      {/* 中栏：Ring 实时预览 */}
-      <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <h3>Ring 预览 · 已绑定 {actionSlotCount}/8 方向</h3>
-        {error !== null && <p style={{ color: 'crimson' }}>{error}</p>}
+      <div className="ringwrap">
         <div
-          style={{
-            width: '320px',
-            height: '320px',
-            borderRadius: '50%',
-            border: '2px dashed var(--fr-border, #dadbe1)',
-            position: 'relative',
-          }}
+          className="ring"
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
@@ -113,108 +127,112 @@ export function RingStudioPage(): JSX.Element {
             }
           }}
         >
-          {EIGHT_DIRECTIONS.map((dir) => {
-            const slot = slots[dir];
-            const isBound = slot?.kind === 'action';
-            const angle = angleFor(dir);
-            const radius = 110;
-            const x = Math.cos(angle) * radius;
-            const y = Math.sin(angle) * radius;
-            return (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: `calc(50% + ${x}px - 36px)`,
-                  top: `calc(50% + ${y}px - 36px)`,
-                  width: '72px',
-                  height: '72px',
-                  borderRadius: '50%',
-                  background: selectedSlot === dir
-                      ? 'rgba(0, 120, 255, 0.2)'
-                      : (isBound ? 'rgba(0, 180, 0, 0.2)' : 'rgba(0, 0, 0, 0.05)'),
-                  border: `2px solid ${selectedSlot === dir ? '#0078ff' : (isBound ? '#00b400' : '#dadbe1')}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  wordBreak: 'break-all',
-                }}
-                key={dir}
-                onClick={() => setSelectedSlot(dir)}
-              >
-                <span>
-                  <strong>{dir}</strong>
-                  <br />
-                  {isBound ? (slot?.actionRef ?? '') : '空'}
-                </span>
-              </div>
-            );
-          })}
+          <div className="rg rg-glass" />
+          <div className="rg rg-cuts" />
+          {selectedSlot !== null && (
+            <div className="rg rg-active" style={{ clipPath: WEDGE[selectedSlot] }} />
+          )}
+          <div className="rg-rim" />
+          <div className="rg-rim-in" />
         </div>
-      </main>
+        <div className="core"><i /></div>
 
-      {/* 右栏：属性面板 */}
-      <aside style={{ borderLeft: '1px solid var(--fr-border, #dadbe1)', paddingLeft: '12px' }}>
-        <h3>属性面板</h3>
-        {selectedSlot === null ? (
-          <p>选择左侧 Ring 上的方向槽位以编辑。</p>
-        ) : (
-          <div>
-            <p>方向：<strong>{selectedSlot}</strong></p>
-            <p>当前绑定：</p>
-            <select
-              value={slots[selectedSlot]?.actionRef ?? ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                setSlots((prev) => ({
-                  ...prev,
-                  [selectedSlot]: v === ''
-                    ? { direction: selectedSlot, kind: 'empty' }
-                    : { direction: selectedSlot, kind: 'action', actionRef: v },
-                }));
-              }}
+        {EIGHT_DIRECTIONS.map((dir) => {
+          const slot = slots[dir];
+          const info = actionInfo(slot?.actionRef);
+          const bound = slot?.kind === 'action' && info !== null;
+          const on = selectedSlot === dir;
+          const pos = LABEL_POS[dir];
+          return (
+            <div
+              key={dir}
+              className={'lbl' + (on ? ' on' : '')}
+              style={{ left: pos.x, top: pos.y }}
+              onClick={() => setSelectedSlot(dir)}
             >
-              <option value="">（空）</option>
-              {actionLibrary.map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
-            <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  const profileJson = JSON.stringify({ id: profileId, updatedAt: new Date().toISOString() });
-                  const ringGraphJson = JSON.stringify({ nodes: { root: { slots: convertSlots(slots) } } });
-                  void bridge.saveStudio({ profileId, profileJson, ringGraphJson });
+              {on && (
+                <div className="selframe">
+                  <i className="sd tl" /><i className="sd tm" /><i className="sd tr" />
+                  <i className="sd lm" /><i className="sd rm" />
+                  <i className="sd bl" /><i className="sd bm" /><i className="sd br" />
+                </div>
+              )}
+              <span className="d">{DIR_CN[dir]}</span>
+              {bound ? (
+                <>
+                  <span className="nm">{info!.name}</span>
+                  {info!.key !== '' && <span className="key">{info!.key}</span>}
+                </>
+              ) : slot?.kind === 'childRing' ? (
+                <span className="nm">子环 · {slot.childRingId ?? '?'}</span>
+              ) : (
+                <span className="nm empty">空槽位</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <aside className="slotpanel">
+        <div className="panel">
+          <div className="ph">属性面板 · 已绑定 {actionSlotCount}/8</div>
+          {selectedSlot === null ? (
+            <p className="hint-p">点击环上的扇区或标签以编辑该方向。</p>
+          ) : (
+            <div>
+              <p className="cur">方向：<strong>{DIR_CN[selectedSlot]}（{selectedSlot}）</strong></p>
+              <select
+                value={slots[selectedSlot]?.actionRef ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSlots((prev) => ({
+                    ...prev,
+                    [selectedSlot]: v === ''
+                      ? { direction: selectedSlot, kind: 'empty' }
+                      : { direction: selectedSlot, kind: 'action', actionRef: v },
+                  }));
                 }}
               >
-                保存
-              </button>
-              <button type="button" onClick={() => setSelectedSlot(null)}>取消</button>
+                <option value="">（空）</option>
+                {actionLibrary.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+              <div className="btnrow">
+                <button
+                  type="button"
+                  className="fbtn"
+                  onClick={() => {
+                    const profileJson = JSON.stringify({ id: profileId, updatedAt: new Date().toISOString() });
+                    const ringGraphJson = JSON.stringify({ nodes: { root: { slots: convertSlots(slots) } } });
+                    void bridge.saveStudio({ profileId, profileJson, ringGraphJson });
+                  }}
+                >
+                  保存
+                </button>
+                <button type="button" className="fbtn ghost" onClick={() => setSelectedSlot(null)}>取消</button>
+              </div>
             </div>
-          </div>
-        )}
-      </aside>
-    </section>
-  );
-}
+          )}
+        </div>
 
-function angleFor(dir: string): number {
-  // Top=-90°, Right=0°, Bottom=+90°, Left=180°
-  // 8 方向按 45° 等分
-  const base: Record<string, number> = {
-    Top: -Math.PI / 2,
-    TopRight: -Math.PI / 4,
-    Right: 0,
-    BottomRight: Math.PI / 4,
-    Bottom: Math.PI / 2,
-    BottomLeft: (3 * Math.PI) / 4,
-    Left: Math.PI,
-    TopLeft: -(3 * Math.PI) / 4,
-  };
-  return base[dir] ?? 0;
+        <div className="panel">
+          <div className="ph second">动作库 · 拖入环上指派</div>
+          <ul className="lib">
+            {actionLibrary.map((a) => (
+              <li
+                key={a}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData('text/plain', a)}
+              >
+                {a}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+    </div>
+  );
 }
 
 function inferDirection(dx: number, dy: number): string | null {
