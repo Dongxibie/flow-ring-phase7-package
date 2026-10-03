@@ -1,62 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBridge } from '../../bridge/useBridge';
+import { SegmentedRing, EIGHT_DIRECTIONS, type SegSlot } from '../../components/SegmentedRing';
+import { useFlowStore } from '../../store/flowStore';
+import { useLang, t } from '../../i18n';
+import { actionName, actionKey } from '../../actions';
+import { loadSlots, saveSlots } from '../../slotStore';
 
-// v20：环工作室改为"整环切割"形态（AI空间样例 09 视觉稿）——
-// 一整块磨砂玻璃圆环被切缝劈成八份，激活扇区用楔形 clip-path 点亮；
-// 动作名/快捷键作为水平标签挂在环外。拖拽指派、属性面板、保存链路原样保留。
-interface SlotViewModel {
+// v20.1：环工作室——整环切割 + 功能标注进扇区（不再挂环外）。
+// 拖拽指派、属性面板、保存链路原样保留；环尺寸/透明度跟随设置实时生效。
+interface SlotViewModel extends SegSlot {
   direction: string;
-  kind: 'empty' | 'action' | 'childRing';
-  actionRef?: string;
-  childRingId?: string;
-}
-
-const EIGHT_DIRECTIONS = ['Top', 'TopRight', 'Right', 'BottomRight', 'Bottom', 'BottomLeft', 'Left', 'TopLeft'];
-
-const DIR_CN: Record<string, string> = {
-  Top: '上', TopRight: '右上', Right: '右', BottomRight: '右下',
-  Bottom: '下', BottomLeft: '左下', Left: '左', TopLeft: '左上',
-};
-
-// 已知动作的展示名与快捷键；未知动作码原样显示
-const ACTION_INFO: Record<string, { name: string; key: string }> = {
-  'key-ctrl-shift-t': { name: '打开终端', key: 'Ctrl+Shift+T' },
-  'system-screenshot': { name: '截取屏幕', key: 'Win+Shift+S' },
-};
-
-// 楔形多边形：以"右"扇区为基准，屏幕坐标（y 向下）按 45° 旋转到各方向
-const WEDGE: Record<string, string> = {
-  Top: 'polygon(50% 50%, 32.1% 3.3%, 37.0% 1.7%, 42.2% 0.6%, 47.4% 0.1%, 52.6% 0.1%, 57.8% 0.6%, 63.0% 1.7%, 67.9% 3.3%)',
-  TopRight: 'polygon(50% 50%, 70.4% 4.3%, 75.0% 6.7%, 79.4% 9.6%, 83.4% 12.9%, 87.1% 16.6%, 90.4% 20.6%, 93.3% 25.0%, 95.7% 29.6%)',
-  Right: 'polygon(50% 50%, 96.7% 32.1%, 98.3% 37.0%, 99.4% 42.2%, 99.9% 47.4%, 99.9% 52.6%, 99.4% 57.8%, 98.3% 63.0%, 96.7% 67.9%)',
-  BottomRight: 'polygon(50% 50%, 95.7% 70.4%, 93.3% 75.0%, 90.4% 79.4%, 87.1% 83.4%, 83.4% 87.1%, 79.4% 90.4%, 75.0% 93.3%, 70.4% 95.7%)',
-  Bottom: 'polygon(50% 50%, 67.9% 96.7%, 63.0% 98.3%, 57.8% 99.4%, 52.6% 99.9%, 47.4% 99.9%, 42.2% 99.4%, 37.0% 98.3%, 32.1% 96.7%)',
-  BottomLeft: 'polygon(50% 50%, 29.6% 95.7%, 25.0% 93.3%, 20.6% 90.4%, 16.6% 87.1%, 12.9% 83.4%, 9.6% 79.4%, 6.7% 75.0%, 4.3% 70.4%)',
-  Left: 'polygon(50% 50%, 3.3% 67.9%, 1.7% 63.0%, 0.6% 57.8%, 0.1% 52.6%, 0.1% 47.4%, 0.6% 42.2%, 1.7% 37.0%, 3.3% 32.1%)',
-  TopLeft: 'polygon(50% 50%, 4.3% 29.6%, 6.7% 25.0%, 9.6% 20.6%, 12.9% 16.6%, 16.6% 12.9%, 20.6% 9.6%, 25.0% 6.7%, 29.6% 4.3%)',
-};
-
-// 标签位置：环外半径 300px 处
-const LABEL_POS: Record<string, { x: number; y: number }> = {
-  Top: { x: 0, y: -300 },
-  TopRight: { x: 212, y: -212 },
-  Right: { x: 300, y: 0 },
-  BottomRight: { x: 212, y: 212 },
-  Bottom: { x: 0, y: 300 },
-  BottomLeft: { x: -212, y: 212 },
-  Left: { x: -300, y: 0 },
-  TopLeft: { x: -212, y: -212 },
-};
-
-function actionInfo(ref?: string): { name: string; key: string } | null {
-  if (!ref) {
-    return null;
-  }
-  return ACTION_INFO[ref] ?? { name: ref, key: '' };
 }
 
 export function RingStudioPage(): JSX.Element {
+  const lang = useLang();
   const bridge = useBridge();
+  const settings = useFlowStore((s: import('../../store/flowStore').FlowState) => s.settings);
   const [profileId] = useState<string>('default');
   const [slots, setSlots] = useState<Record<string, SlotViewModel>>({});
   const [actionLibrary, setActionLibrary] = useState<string[]>([]);
@@ -70,26 +29,26 @@ export function RingStudioPage(): JSX.Element {
         return;
       }
       try {
-        const ring = JSON.parse(ringGraphJson) as { nodes: Record<string, { slots: Record<string, { kind: 'action' | 'childRing'; actionRef?: string; childRingId?: string }> }> };
+        const ring = JSON.parse(ringGraphJson) as { nodes: Record<string, { slots: Record<string, SegSlot> }> };
         const root = ring.nodes.root;
         const mapped: Record<string, SlotViewModel> = {};
         for (const dir of EIGHT_DIRECTIONS) {
           const s = root.slots[dir];
-          if (!s) {
-            mapped[dir] = { direction: dir, kind: 'empty' };
-          } else {
-            mapped[dir] = {
-              direction: dir,
-              kind: s.kind === 'childRing' ? 'childRing' : 'action',
-              actionRef: s.actionRef,
-              childRingId: s.childRingId,
-            };
+          mapped[dir] = s
+            ? { direction: dir, kind: s.kind, actionRef: s.actionRef, childRingId: s.childRingId }
+            : { direction: dir, kind: 'empty' };
+        }
+        // v21：本地已保存的指派优先（loadSlots），叠加 host 图谱兜底
+        const saved = loadSlots();
+        for (const dir of EIGHT_DIRECTIONS) {
+          if (saved[dir]?.kind === 'action') {
+            mapped[dir] = { direction: dir, ...saved[dir] };
           }
         }
         setSlots(mapped);
         setActionLibrary(lib);
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Ring 图解析失败');
+        setError(e instanceof Error ? e.message : t('Ring 图解析失败', 'Failed to parse ring graph'));
       }
     });
     return () => {
@@ -98,89 +57,64 @@ export function RingStudioPage(): JSX.Element {
     // v19 白屏修复口诀：依赖收敛到稳定方法引用
   }, [bridge.loadStudio, profileId]);
 
+  // v21：指派即持久化（覆盖层 / 右键唤起读同一份）
+  useEffect(() => {
+    if (Object.keys(slots).length > 0) {
+      saveSlots(slots);
+    }
+  }, [slots]);
+
   const actionSlotCount = useMemo(
     () => Object.values(slots).filter((s) => s.kind === 'action').length,
     [slots],
   );
 
   return (
-    <div className="studio">
+    <div
+      className="studio-inner"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const actionRef = e.dataTransfer.getData('text/plain');
+        // v21.1 修复：拖拽面 = 整页，方向以环心（SegmentedRing 的 ringwrap）为基准
+        const ringCenter = document.querySelector('.studio .ringwrap')?.getBoundingClientRect();
+        const dx = ringCenter ? e.clientX - (ringCenter.left + ringCenter.width / 2) : 0;
+        const dy = ringCenter ? e.clientY - (ringCenter.top + ringCenter.height / 2) : 0;
+        const dir = inferDirection(dx, dy);
+        if (dir !== null && actionRef.length > 0) {
+          setSlots((prev) => ({
+            ...prev,
+            [dir]: { direction: dir, kind: 'action', actionRef },
+          }));
+          setSelectedSlot(dir);
+        }
+      }}
+    >
       {error !== null && <p className="err">{error}</p>}
 
-      <div className="ringwrap">
-        <div
-          className="ring"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const actionRef = e.dataTransfer.getData('text/plain');
-            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-            const dx = e.clientX - (rect.left + rect.width / 2);
-            const dy = e.clientY - (rect.top + rect.height / 2);
-            const dir = inferDirection(dx, dy);
-            if (dir !== null && actionRef.length > 0) {
-              setSlots((prev) => ({
-                ...prev,
-                [dir]: { direction: dir, kind: 'action', actionRef },
-              }));
-              setSelectedSlot(dir);
-            }
-          }}
-        >
-          <div className="rg rg-glass" />
-          <div className="rg rg-cuts" />
-          {selectedSlot !== null && (
-            <div className="rg rg-active" style={{ clipPath: WEDGE[selectedSlot] }} />
-          )}
-          <div className="rg-rim" />
-          <div className="rg-rim-in" />
-        </div>
-        <div className="core"><i /></div>
-
-        {EIGHT_DIRECTIONS.map((dir) => {
-          const slot = slots[dir];
-          const info = actionInfo(slot?.actionRef);
-          const bound = slot?.kind === 'action' && info !== null;
-          const on = selectedSlot === dir;
-          const pos = LABEL_POS[dir];
-          return (
-            <div
-              key={dir}
-              className={'lbl' + (on ? ' on' : '')}
-              style={{ left: pos.x, top: pos.y }}
-              onClick={() => setSelectedSlot(dir)}
-            >
-              {on && (
-                <div className="selframe">
-                  <i className="sd tl" /><i className="sd tm" /><i className="sd tr" />
-                  <i className="sd lm" /><i className="sd rm" />
-                  <i className="sd bl" /><i className="sd bm" /><i className="sd br" />
-                </div>
-              )}
-              <span className="d">{DIR_CN[dir]}</span>
-              {bound ? (
-                <>
-                  <span className="nm">{info!.name}</span>
-                  {info!.key !== '' && <span className="key">{info!.key}</span>}
-                </>
-              ) : slot?.kind === 'childRing' ? (
-                <span className="nm">子环 · {slot.childRingId ?? '?'}</span>
-              ) : (
-                <span className="nm empty">空槽位</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <>
+        <SegmentedRing
+          size={Math.min(settings.ringSizePx, Math.round(window.innerHeight * 0.62))}
+          opacity={settings.ringOpacity}
+          bgColor="#171614"
+          slots={slots}
+          selected={selectedSlot}
+          onSelect={setSelectedSlot}
+          nameOf={(r) => actionName(r, lang)}
+          keyOf={actionKey}
+          emptyLabel={t('空槽位', 'Empty')}
+          childLabel={(id) => (lang === 'zh' ? `子环 · ${id ?? '?'}` : `Sub-ring · ${id ?? '?'}`)}
+        />
+      </>
 
       <aside className="slotpanel">
         <div className="panel">
-          <div className="ph">属性面板 · 已绑定 {actionSlotCount}/8</div>
+          <div className="ph">{t('属性面板', 'PROPERTIES')} · {t('已绑定', 'BOUND')} {actionSlotCount}/8</div>
           {selectedSlot === null ? (
-            <p className="hint-p">点击环上的扇区或标签以编辑该方向。</p>
+            <p className="hint-p">{t('点击环上的扇区以编辑该方向。', 'Click a sector on the ring to edit it.')}</p>
           ) : (
             <div>
-              <p className="cur">方向：<strong>{DIR_CN[selectedSlot]}（{selectedSlot}）</strong></p>
+              <p className="cur">{t('方向', 'Direction')}：<strong>{dirCn(selectedSlot, lang)}（{selectedSlot}）</strong></p>
               <select
                 value={slots[selectedSlot]?.actionRef ?? ''}
                 onChange={(e) => {
@@ -193,9 +127,9 @@ export function RingStudioPage(): JSX.Element {
                   }));
                 }}
               >
-                <option value="">（空）</option>
+                <option value="">{t('（空）', '(empty)')}</option>
                 {actionLibrary.map((a) => (
-                  <option key={a} value={a}>{a}</option>
+                  <option key={a} value={a}>{actionName(a, lang)} · {a}</option>
                 ))}
               </select>
               <div className="btnrow">
@@ -208,16 +142,18 @@ export function RingStudioPage(): JSX.Element {
                     void bridge.saveStudio({ profileId, profileJson, ringGraphJson });
                   }}
                 >
-                  保存
+                  {t('保存', 'Save')}
                 </button>
-                <button type="button" className="fbtn ghost" onClick={() => setSelectedSlot(null)}>取消</button>
+                <button type="button" className="fbtn ghost" onClick={() => setSelectedSlot(null)}>
+                  {t('取消', 'Cancel')}
+                </button>
               </div>
             </div>
           )}
         </div>
 
         <div className="panel">
-          <div className="ph second">动作库 · 拖入环上指派</div>
+          <div className="ph second">{t('动作库 · 拖入环上指派', 'ACTIONS · DRAG ONTO THE RING')}</div>
           <ul className="lib">
             {actionLibrary.map((a) => (
               <li
@@ -225,7 +161,8 @@ export function RingStudioPage(): JSX.Element {
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData('text/plain', a)}
               >
-                {a}
+                {actionName(a, lang)}
+                <span className="acode">{a}</span>
               </li>
             ))}
           </ul>
@@ -233,6 +170,16 @@ export function RingStudioPage(): JSX.Element {
       </aside>
     </div>
   );
+}
+
+function dirCn(dir: string, lang: 'zh' | 'en'): string {
+  const m: Record<string, [string, string]> = {
+    Top: ['上', 'Top'], TopRight: ['右上', 'Top-Right'], Right: ['右', 'Right'],
+    BottomRight: ['右下', 'Bottom-Right'], Bottom: ['下', 'Bottom'],
+    BottomLeft: ['左下', 'Bottom-Left'], Left: ['左', 'Left'], TopLeft: ['左上', 'Top-Left'],
+  };
+  const pair = m[dir] ?? [dir, dir];
+  return lang === 'zh' ? pair[0] : pair[1];
 }
 
 function inferDirection(dx: number, dy: number): string | null {
