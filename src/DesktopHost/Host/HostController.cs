@@ -81,10 +81,10 @@ public sealed class HostController : IDisposable
         _tray.UpdateIcon();
     }
 
-    /// <summary>v21：前端/弹窗触发的动作真执行入口。</summary>
-    public async Task ExecuteActionAsync(string code)
+    /// <summary>v21：前端/弹窗触发的动作真执行入口。v22：支持自定义动作参数（app-launch 的目标）。</summary>
+    public async Task ExecuteActionAsync(string code, string? arg = null)
     {
-        _logger.LogInformation("执行动作：{Code}", code);
+        _logger.LogInformation("执行动作：{Code}（arg={Arg}）", code, arg ?? "-");
         try
         {
             switch (code)
@@ -92,6 +92,17 @@ public sealed class HostController : IDisposable
                 case "open-frontend":
                     // MVP 语义：打开 Flow Ring 主界面（后续可配置为任意前端应用）
                     ShowMainWindow();
+                    return;
+
+                case "app-launch":
+                    // v22：自定义动作——启动应用 / 打开网址（UseShellExecute 通吃 exe 与 URL）
+                    if (string.IsNullOrWhiteSpace(arg))
+                    {
+                        _logger.LogWarning("app-launch 缺少目标");
+                        return;
+                    }
+                    Process.Start(new ProcessStartInfo(arg) { UseShellExecute = true });
+                    _logger.LogInformation("已启动：{Arg}", arg);
                     return;
 
                 case "key-ctrl-shift-t":
@@ -176,14 +187,30 @@ public sealed class HostController : IDisposable
 
     private void OnSpatialIntent(object? sender, SpatialIntentEvent e)
     {
-        // MVP 只响应侧键长按（与设置页默认触发键一致）；中键/右键长按 v1.1 再放行
-        if (e.TriggerType == TriggerType.MouseSideButton)
+        // v22：侧键/中键/右键长按全部唤起；但在 Flow Ring 自己前台时不弹
+        //（应用内右键有自己的覆盖层，避免叠加）
+        if (e.TriggerType == TriggerType.None || IsForegroundSelf())
         {
-            var origin = e.OriginPoint ?? new RingPoint(0, 0);
-            _logger.LogInformation("侧键长按触发：({X},{Y})", origin.X, origin.Y);
-            _ringOverlay?.ShowRing();
+            return;
         }
+        var origin = e.OriginPoint ?? new RingPoint(0, 0);
+        _logger.LogInformation("快捷环触发（{Trigger}）：({X},{Y})",
+            e.TriggerType, origin.X, origin.Y);
+        _ringOverlay?.ShowRing();
     }
+
+    private static bool IsForegroundSelf()
+    {
+        var fg = GetForegroundWindow();
+        _ = GetWindowThreadProcessId(fg, out var pid);
+        return pid == Environment.ProcessId;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
 
     /// <summary>接收 WebView2 端消息（Named Pipe 通道；前端 PROFILE_LIST 等占位）。</summary>
     public void OnWebMessage(string json)

@@ -122,10 +122,11 @@ public sealed class RingOverlayForm : Form
             {
                 case "ACTION_TRIGGER":
                     var code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetString() : null;
+                    var arg = doc.RootElement.TryGetProperty("arg", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.String ? a.GetString() : null;
                     if (!string.IsNullOrEmpty(code))
                     {
                         _logger.LogInformation("快捷环触发动作：{Code}", code);
-                        _ = _controller.ExecuteActionAsync(code);
+                        _ = _controller.ExecuteActionAsync(code, arg);
                     }
                     break;
                 case "OVERLAY_DONE":

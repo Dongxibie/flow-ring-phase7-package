@@ -14,6 +14,7 @@
   --olive45:rgba(219,221,161,.45);
   --fill:#63624B;
   --fill-hover:#73725A;
+  color-scheme: dark; /* v22：原生下拉/滚动条走暗色（修下拉框刺眼白） */
   --serif:'Noto Serif SC','Source Han Serif SC',serif;
   --mono:'JetBrains Mono','Cascadia Mono',Consolas,monospace;
 }
@@ -71,16 +72,17 @@ input,select,textarea{font-family:var(--mono)}
 .err{color:#e08a8a;font-family:var(--mono);font-size:12px;letter-spacing:.05em;margin-bottom:12px}
 
 /* 档案索引行 */
-.erow{display:flex;align-items:center;gap:12px;border-top:1px solid var(--hair);padding:20px 8px}
+.erow{display:flex;align-items:center;flex-wrap:wrap;row-gap:6px;gap:12px;border-top:1px solid var(--hair);padding:20px 8px}
 .erow:last-of-type{border-bottom:1px solid var(--hair)}
 .erow .idx{font-family:var(--mono);font-size:11px;color:var(--ink40);letter-spacing:.1em}
-.erow .name{font-weight:700;font-size:20px;letter-spacing:-.5px;white-space:nowrap}
+.erow .name{font-weight:700;font-size:20px;letter-spacing:-.5px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .erow .pid{font-family:var(--mono);font-size:11px;color:var(--ink40);letter-spacing:.06em;white-space:nowrap}
 .erow .sp{flex:1}
 .tag{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--olive);
   border:1px solid var(--olive45);padding:4px 10px;white-space:nowrap}
 .acts{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--ink55);white-space:nowrap}
 .acts b{font-weight:400;color:var(--olive);cursor:pointer}
+.erow-edit{display:flex;align-items:center;gap:10px;flex:1}
 
 /* 括角按钮 */
 .newbtn-wrap{position:relative;width:fit-content;margin-top:30px}
@@ -104,6 +106,9 @@ input,select,textarea{font-family:var(--mono)}
 .frow{display:flex;gap:24px;flex-wrap:wrap}
 select,.tinput{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
   color:var(--ink);font-size:12px;padding:8px 10px;outline:none}
+select option,select optgroup{background:#232323;color:var(--ink)} /* 弹出列表暗色 */
+select::-webkit-scrollbar{width:8px}
+select::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:4px}
 select:focus,.tinput:focus{border-color:var(--olive45)}
 .tinput.w{width:100%;margin-top:10px}
 textarea.codebox{width:100%;min-height:110px;background:rgba(255,255,255,.04);
@@ -142,7 +147,8 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
 .rg-rim{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.16);pointer-events:none}
 .rg-rim-in{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.12);pointer-events:none}
 .wedge{position:absolute;inset:0;cursor:pointer}
-.spoke{position:absolute;width:2px;border-radius:1px;background:rgba(255,255,255,.16);pointer-events:none}
+.spoke{position:absolute;width:2px;border-radius:1px;background:rgba(255,255,255,.32);pointer-events:none}
+.spoke.mid{background:rgba(255,255,255,.13);width:1px}
 .core{position:absolute;left:-28px;top:-28px;width:56px;height:56px;border-radius:50%;
   background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
@@ -153,7 +159,7 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
 /* 扇区内标注（随扇区旋转，下半球自动翻转） */
 .seg{position:absolute;display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none}
 .seg .snm{font-weight:500;font-size:13px;letter-spacing:-.2px;white-space:nowrap}
-.seg .snm.empty{color:var(--ink40);font-weight:300}
+.seg .snm.empty{color:var(--ink70);font-weight:300;background:rgba(11,12,10,.55);padding:1px 6px;border-radius:4px}
 .seg .skey{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--ink70);
   background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);
   border-radius:4px;padding:2px 7px;white-space:nowrap}
@@ -187,6 +193,10 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
   transition:border-color .3s}
 .lib li:hover{border-color:var(--olive45)}
 .lib li .acode{color:var(--ink40);font-size:9px;margin-left:8px}
+.lib li .adel{float:right;color:var(--ink40);cursor:pointer;padding:0 4px}
+.lib li .adel:hover{color:#e08a8a}
+.fbtn.mini{padding:4px 10px;font-size:10px;letter-spacing:.1em;float:right;margin-top:-2px}
+.cform{border:1px solid var(--hair);border-radius:10px;padding:12px;margin-bottom:12px;background:rgba(255,255,255,.03)}
 
 /* ── 右键覆盖层（运行时形态：只有单纯的圆环） ── */
 .overlay{position:fixed;inset:0;z-index:50;background:rgba(8,9,7,.72);
