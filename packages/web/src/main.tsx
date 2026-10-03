@@ -1,35 +1,38 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider, createBrowserRouter, type RouteObject } from 'react-router-dom';
-import { App } from './App';
+import { Layout } from './Layout';
+import { ProfileManagerPage } from './pages/ProfileManager/ProfileManagerPage';
+import { RingStudioPage } from './pages/RingStudio/RingStudioPage';
+import { SettingsPage } from './pages/Settings/SettingsPage';
+import { FlowCodePage } from './pages/FlowCode/FlowCodePage';
 
-// v8 修复：路由表用 catch-all 让任何路径都能渲染 App
+// v9 重构：单一 Router，消除 v5-v8 的双重 Router 不确定性
 //
-// 根因（已确认）：WebView2 通过 SetVirtualHostNameToFolderMapping 把 dist 目录映射成
-// https://flowring.local，Navigate 到 https://flowring.local/index.html。
-// React Router createBrowserRouter 拿到的当前路径是 '/index.html'，不匹配 main.tsx 路由表
-// 里的 path: '/'，抛 ErrorResponse(404) ErrorBoundary 显示 "Unexpected Application Error! 404 Not Found"。
+// v5-v8 历史：
+// - v5 之前：Phase 5 早期架构，main.tsx 用 RouterProvider 包 App，App 内 <Routes> 定义子路由
+// - v8：把 App.tsx 子 Route 改成相对路径 + main.tsx path: '*' catch-all
+// - 问题：React Router v6 不支持嵌套 Router（在 RouterProvider 下又用 <Routes>）
 //
-// App.tsx 内部又用 <Routes> 定义了一组绝对路径（/studio /profiles /flow-code /settings），
-// 但 React Router v6 不允许嵌套 Router（App 内 <Routes> 在 <RouterProvider> 下是独立子 Router）
-// 且子 Route 的 path 必须是相对路径（不能以 / 开头）。
+// v9 修法：彻底消除双重 Router
+// - main.tsx 路由表只有 path: '/' 顶层 Layout + children 子路由
+// - Layout 在 src/Layout.tsx（新文件），NavLink + Outlet
+// - 子路由全在 main.tsx 里（无 catch-all hack）
+// - WebView2 Navigate 到 https://flowring.local/（不带 /index.html）→ React Router 拿到 '/'
 //
-// v8 修法（最小改动）：
-//   1. main.tsx 路由表 path 改成 '*' catch-all，App 作为 element
-//   2. App.tsx 内部 Routes 保持，但绝对路径改成相对路径（去掉前缀）
-//   3. App.tsx 内 Layout 用 <Outlet/> 渲染子路由
-//
-// 这样：
-//   - 任何路径（包括 /index.html、/studio、/profiles 等）都进 App
-//   - App 内部 Routes 接管路径匹配
-//   - NavLink to="/studio" 仍能正确跳转
-//
-// 完整重构到 main.tsx 单 Router（v1.1+ 待办）：
-//   - main.tsx 直接持有 Layout + 四页路由
-//   - App.tsx 退化为 Layout 组件（NavLink + Outlet）
-//   - 没有双重 Router
+// 预期：用户开 Studio → 看到 Layout（顶部 NavLink 四条 + 主体 ProfileManagerPage 占位内容）
 const routes: RouteObject[] = [
-  { path: '*', element: <App /> },
+  {
+    path: '/',
+    element: <Layout />,
+    children: [
+      { index: true, element: <ProfileManagerPage /> },
+      { path: 'studio', element: <RingStudioPage /> },
+      { path: 'profiles', element: <ProfileManagerPage /> },
+      { path: 'flow-code', element: <FlowCodePage /> },
+      { path: 'settings', element: <SettingsPage /> },
+    ],
+  },
 ];
 
 const router = createBrowserRouter(routes);
