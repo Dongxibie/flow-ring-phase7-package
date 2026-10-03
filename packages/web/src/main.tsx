@@ -7,23 +7,28 @@ import { RingStudioPage } from './pages/RingStudio/RingStudioPage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { FlowCodePage } from './pages/FlowCode/FlowCodePage';
 
-// v9 重构：单一 Router，消除 v5-v8 的双重 Router 不确定性
+// v10 修法：WebView2 Navigate 必须带文件名（/index.html），不能裸路径（/）
 //
-// v5-v8 历史：
-// - v5 之前：Phase 5 早期架构，main.tsx 用 RouterProvider 包 App，App 内 <Routes> 定义子路由
-// - v8：把 App.tsx 子 Route 改成相对路径 + main.tsx path: '*' catch-all
-// - 问题：React Router v6 不支持嵌套 Router（在 RouterProvider 下又用 <Routes>）
+// v9 实测：WebView2 Navigate 到 https://flowring.local/ 报 ERR_ACCESS_DENIED
+// - SetVirtualHostNameToFolderMapping 把 dist 映射成虚拟域
+// - 但裸 / 路径在 dist 里没文件（只有 index.html 等）
+// - SDK 1.0.2651.64 没有 defaultDocument 重载（reflection 验证）
+// - WebView2 不会自动 fallback 到 index.html → ERR_ACCESS_DENIED
 //
-// v9 修法：彻底消除双重 Router
-// - main.tsx 路由表只有 path: '/' 顶层 Layout + children 子路由
-// - Layout 在 src/Layout.tsx（新文件），NavLink + Outlet
-// - 子路由全在 main.tsx 里（无 catch-all hack）
-// - WebView2 Navigate 到 https://flowring.local/（不带 /index.html）→ React Router 拿到 '/'
+// v10 修：catch-all 顶层 + Layout element + children 相对路径
+// - WebView2 Navigate 改回 https://flowring.local/index.html（确保 HTML 加载成功）
+// - 顶层 path: '*' catch-all 让任何路径（/index.html、/studio 等）都进 Layout
+// - children 路径相对 catch-all（'studio' 不是 '/studio'），匹配 React Router v6 嵌套规则
+// - Outlet 渲染 children（按相对路径匹配）
+// - /index.html 进入时，path: '*' 渲染 Layout，children index 默认匹配 → ProfileManagerPage
 //
-// 预期：用户开 Studio → 看到 Layout（顶部 NavLink 四条 + 主体 ProfileManagerPage 占位内容）
+// 测试预期：
+// - WebView2 Navigate 到 https://flowring.local/index.html → HTML 加载
+// - 顶层 catch-all 匹配 → Layout 渲染
+// - 主窗口看到顶部 NavLink 四条 + 主体 ProfileManagerPage 占位内容
 const routes: RouteObject[] = [
   {
-    path: '/',
+    path: '*',
     element: <Layout />,
     children: [
       { index: true, element: <ProfileManagerPage /> },
