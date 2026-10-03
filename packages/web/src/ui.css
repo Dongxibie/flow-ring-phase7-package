@@ -1,6 +1,7 @@
-/* Flow Ring — 暗色编辑排版主题（v20）
+/* Flow Ring — 暗色编辑排版主题（v20.1）
    风格来源：AI空间样例 08/09 视觉稿定稿版
-   角落锚点 · 大衬线标题 · 细线索引行 · 橄榄强调 · 整环切割玻璃 */
+   角落锚点 · 大衬线标题 · 细线索引行 · 橄榄强调 · 整环切割玻璃
+   v20.1：功能标注进扇区、右键覆盖层、环透明度/大小可调、中英双语 */
 
 :root{
   --bg:#171614;
@@ -25,11 +26,15 @@ input,select,textarea{font-family:var(--mono)}
 
 .stage{position:fixed;inset:0;overflow:hidden;background:var(--bg)}
 
-/* ── 左上品牌 / 右上微文 ── */
+/* ── 左上品牌 / 右上语言切换与微文 ── */
 .brand{position:absolute;top:44px;left:48px;z-index:5}
 .brand .wm{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.3em}
 .brand .sub{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--ink40);margin-top:8px}
-.blurb{position:absolute;top:44px;right:48px;z-index:5;max-width:260px;text-align:right;
+.langtgl{position:absolute;top:40px;right:48px;z-index:6;
+  font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--ink55);
+  border:1px solid rgba(255,255,255,.16);padding:5px 12px;transition:color .3s,border-color .3s}
+.langtgl:hover{color:var(--olive);border-color:var(--olive45)}
+.blurb{position:absolute;top:86px;right:48px;z-index:5;max-width:260px;text-align:right;
   font-family:var(--mono);font-size:10px;line-height:1.9;letter-spacing:.14em;
   color:var(--ink70);white-space:pre-line}
 
@@ -39,7 +44,7 @@ input,select,textarea{font-family:var(--mono)}
 .hero h1{font-weight:900;font-size:96px;line-height:.95;letter-spacing:-2px;margin-top:16px}
 .hero .desc{font-weight:300;font-size:14px;line-height:2;color:var(--olive);
   margin-top:22px;max-width:400px;white-space:pre-line}
-.hero.compact{top:110px;max-width:360px}
+.hero.compact{top:96px;max-width:340px}
 .hero.compact h1{font-size:60px;letter-spacing:-1px}
 .hero.compact .desc{font-size:13px;max-width:300px;margin-top:16px}
 
@@ -92,6 +97,7 @@ input,select,textarea{font-family:var(--mono)}
 .panel{border-top:1px solid var(--hair);padding:18px 4px 22px}
 .panel + .panel{margin-top:8px}
 .ph{font-family:var(--mono);font-size:11px;letter-spacing:.26em;color:var(--ink55);margin-bottom:14px}
+.ph.second{margin-top:22px}
 .flab{font-family:var(--mono);font-size:12px;color:var(--ink70);letter-spacing:.06em;
   display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .flab.chk{display:flex;align-items:center;gap:8px}
@@ -117,38 +123,44 @@ textarea.codebox{width:100%;min-height:110px;background:rgba(255,255,255,.04);
 .status-ok{color:#8fce9d;font-family:var(--mono);font-size:12px;margin-top:12px}
 .status-err{color:#e08a8a;font-family:var(--mono);font-size:12px;margin-top:12px}
 
-/* ── 整环切割（环工作室） ── */
-.studio{position:absolute;inset:0;z-index:3}
+/* 滑杆（环外观） */
+.rngrow{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.rngrow .rl{font-family:var(--mono);font-size:12px;color:var(--ink70);width:96px;letter-spacing:.06em;flex:none}
+.rngrow .rv{font-family:var(--mono);font-size:11px;color:var(--olive);width:56px;text-align:right;flex:none}
+input[type=range].rng{-webkit-appearance:none;appearance:none;flex:1;height:4px;border-radius:2px;
+  background:rgba(255,255,255,.14);outline:none;cursor:pointer}
+input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+  width:14px;height:14px;border-radius:50%;background:var(--olive);border:none;cursor:pointer}
+
+/* ── 整环切割（环工作室 + 右键覆盖层共用构件） ── */
 .ringwrap{position:absolute;left:54%;top:54%;width:0;height:0}
-.ring{position:absolute;left:-250px;top:-250px;width:500px;height:500px}
-.rg{position:absolute;inset:0;border-radius:50%;
-  -webkit-mask:radial-gradient(farthest-side,transparent 139px,#000 140px);
-  mask:radial-gradient(farthest-side,transparent 139px,#000 140px)}
-.rg-glass{background:rgba(255,255,255,.075);
-  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+.ring{position:absolute}
+.rg{position:absolute;inset:0;border-radius:50%}
+.rg-glass{backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
   box-shadow:0 14px 34px rgba(0,0,0,.35)}
-.rg-cuts{background:repeating-conic-gradient(from -1.6deg,var(--bg) 0deg 3.2deg,transparent 3.2deg 45deg)}
 .rg-active{background:rgba(219,221,161,.16)}
-.rg-rim{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.16)}
-.rg-rim-in{position:absolute;inset:140px;border-radius:50%;border:1px solid rgba(255,255,255,.12)}
+.rg-rim{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.16);pointer-events:none}
+.rg-rim-in{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.12);pointer-events:none}
+.wedge{position:absolute;inset:0;cursor:pointer}
+.spoke{position:absolute;width:2px;border-radius:1px;background:rgba(255,255,255,.16);pointer-events:none}
 .core{position:absolute;left:-28px;top:-28px;width:56px;height:56px;border-radius:50%;
   background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none}
 .core i{width:10px;height:10px;border-radius:50%;background:var(--olive)}
 
-.lbl{position:absolute;transform:translate(-50%,-50%);width:150px;
-  display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;cursor:pointer}
-.lbl .d{font-family:var(--mono);font-size:9px;letter-spacing:.3em;color:var(--ink40)}
-.lbl .nm{font-weight:500;font-size:14px;letter-spacing:-.3px}
-.lbl .nm.empty{color:var(--ink40);font-weight:300}
-.lbl .key{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink70);
-  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);
-  border-radius:5px;padding:3px 9px}
-.lbl.on .nm{color:var(--olive)}
-.lbl.on .key{color:var(--olive);border-color:var(--olive45);background:rgba(219,221,161,.08)}
-.selframe{position:absolute;inset:-7px -9px;border:2px solid rgba(255,255,255,.9);pointer-events:none}
+/* 扇区内标注（随扇区旋转，下半球自动翻转） */
+.seg{position:absolute;display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none}
+.seg .snm{font-weight:500;font-size:13px;letter-spacing:-.2px;white-space:nowrap}
+.seg .snm.empty{color:var(--ink40);font-weight:300}
+.seg .skey{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--ink70);
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);
+  border-radius:4px;padding:2px 7px;white-space:nowrap}
+.seg.on .snm,.seg.on .skey{color:var(--olive)}
+.seg.on .skey{border-color:var(--olive45);background:rgba(219,221,161,.10)}
+.seg.hover .snm,.seg.hover .skey{color:var(--olive)}
+.selframe{position:absolute;inset:-6px -8px;border:2px solid rgba(255,255,255,.9);pointer-events:none}
 .sd{position:absolute;width:6px;height:6px;background:#fff}
 .sd.tl{left:-3px;top:-3px}
 .sd.tr{right:-3px;top:-3px}
@@ -159,14 +171,26 @@ textarea.codebox{width:100%;min-height:110px;background:rgba(255,255,255,.04);
 .sd.lm{left:-3px;top:50%;transform:translateY(-50%)}
 .sd.rm{right:-3px;top:50%;transform:translateY(-50%)}
 
-.slotpanel{position:absolute;right:48px;top:140px;width:330px;
-  max-height:calc(100% - 260px);overflow-y:auto;scrollbar-width:none}
+/* ── 环工作室布局：左栏（标题+面板），环在右中 ── */
+.studio{position:absolute;inset:0;z-index:3}
+.studio-inner{position:absolute;inset:0}
+.studio .ringwrap{left:calc(50% + 170px);top:52%}
+.slotpanel{position:absolute;left:48px;top:296px;width:330px;
+  max-height:calc(100% - 360px);overflow-y:auto;scrollbar-width:none}
 .slotpanel::-webkit-scrollbar{display:none}
 .slotpanel .cur{font-size:13px;margin-bottom:8px}
 .slotpanel .hint-p{font-weight:300;font-size:12px;color:var(--ink55);line-height:1.9}
-.slotpanel .ph.second{margin-top:22px}
+.slotpanel select{width:100%;margin-top:8px}
 .lib{list-style:none}
 .lib li{font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--ink70);
   border:1px solid rgba(255,255,255,.10);padding:8px 10px;margin-bottom:6px;cursor:grab;
   transition:border-color .3s}
 .lib li:hover{border-color:var(--olive45)}
+.lib li .acode{color:var(--ink40);font-size:9px;margin-left:8px}
+
+/* ── 右键覆盖层（运行时形态：只有单纯的圆环） ── */
+.overlay{position:fixed;inset:0;z-index:50;background:rgba(8,9,7,.72);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.overlay .ringwrap{left:50%;top:50%}
+.overlay .hint{position:absolute;bottom:36px;left:0;right:0;text-align:center;
+  font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--ink55)}

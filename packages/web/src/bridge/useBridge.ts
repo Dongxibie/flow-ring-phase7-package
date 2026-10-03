@@ -5,6 +5,7 @@ import type {
   FlowCodeExportPayload,
   FlowCodeImportPayload,
 } from '../protocol/messages';
+import { ACTION_LIBRARY } from '../actions';
 
 declare global {
   interface Window {
@@ -87,19 +88,19 @@ export function useBridge(): BridgeApi {
         checksum: '0'.repeat(64),
       },
       ringGraph: { rootId: 'root', nodes: {} },
-      actionRefs: ['key-ctrl-shift-t', 'system-screenshot'],
+      actionRefs: ACTION_LIBRARY,
       contextRules: [],
     });
     const emptyRing = JSON.stringify({
       rootId: 'root',
       nodes: {
-        root: { id: 'root', profileId, slots: {} },
+        root: { id: profileId, slots: {} },
       },
     });
     return {
       profileJson: emptyProfile,
       ringGraphJson: emptyRing,
-      actionLibrary: ['key-ctrl-shift-t', 'system-screenshot'],
+      actionLibrary: ACTION_LIBRARY,
     };
   }, []);
 

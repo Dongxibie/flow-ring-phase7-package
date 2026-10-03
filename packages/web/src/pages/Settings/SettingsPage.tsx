@@ -1,39 +1,73 @@
 import { useFlowStore } from '../../store/flowStore';
+import { useLang, t } from '../../i18n';
 
 const TRIGGER_KEY_OPTIONS = [
-  { value: 'MouseSideButton', label: '鼠标侧键长按' },
-  { value: 'MiddleButton', label: '中键长按' },
-  { value: 'RightButtonLongPress', label: '右键长按' },
-  { value: 'HotKey', label: '自定义热键' },
+  { value: 'MouseSideButton', zh: '鼠标侧键长按', en: 'Mouse side button (hold)' },
+  { value: 'MiddleButton', zh: '中键长按', en: 'Middle button (hold)' },
+  { value: 'RightButtonLongPress', zh: '右键长按', en: 'Right button (long press)' },
+  { value: 'HotKey', zh: '自定义热键', en: 'Custom hotkey' },
 ];
 
-// v20：暗色编辑排版面板。设置字段与写值逻辑原样保留。
+// v20.1：设置面板 + 中英双语 + 环外观（透明度/大小，实时生效并持久化）。
 export function SettingsPage(): JSX.Element {
+  const lang = useLang();
   const settings = useFlowStore((s: import('../../store/flowStore').FlowState) => s.settings);
   const update = useFlowStore((s: import('../../store/flowStore').FlowState) => s.updateSettings);
 
   return (
     <div className="stack">
       <div className="panel">
-        <div className="ph">触发键</div>
+        <div className="ph">{t('环外观', 'RING APPEARANCE')}</div>
+        <div className="rngrow">
+          <span className="rl">{t('透明度', 'Opacity')}</span>
+          <input
+            type="range"
+            className="rng"
+            min={25}
+            max={100}
+            value={Math.round(settings.ringOpacity * 100)}
+            onChange={(e) => update({ ringOpacity: Number(e.target.value) / 100 })}
+          />
+          <span className="rv">{Math.round(settings.ringOpacity * 100)}%</span>
+        </div>
+        <div className="rngrow">
+          <span className="rl">{t('大小', 'Size')}</span>
+          <input
+            type="range"
+            className="rng"
+            min={320}
+            max={640}
+            step={20}
+            value={settings.ringSizePx}
+            onChange={(e) => update({ ringSizePx: Number(e.target.value) })}
+          />
+          <span className="rv">{settings.ringSizePx}px</span>
+        </div>
+        <p className="note">{t('对环工作室与右键唤起的圆环同时生效，自动保存。', 'Applies to both Ring Studio and the right-click ring. Saved automatically.')}</p>
+      </div>
+
+      <div className="panel">
+        <div className="ph">{t('触发键', 'TRIGGER KEY')}</div>
         <label className="flab">
-          默认触发
+          {t('默认触发', 'Default trigger')}
           <select
             value={settings.triggerKey}
             onChange={(e) => update({ triggerKey: e.target.value })}
           >
             {TRIGGER_KEY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value}>{lang === 'zh' ? o.zh : o.en}</option>
             ))}
           </select>
         </label>
-        <p className="note">MVP 默认仅 MouseSideButton，其他项在 v1.1 启用。</p>
+        <p className="note">
+          {t('MVP 默认仅 MouseSideButton，其他项在 v1.1 启用。', 'MVP ships MouseSideButton only; the rest activate in v1.1.')}
+        </p>
       </div>
 
       <div className="panel">
-        <div className="ph">死区半径</div>
+        <div className="ph">{t('死区半径', 'DEAD ZONE')}</div>
         <label className="flab">
-          半径（像素）
+          {t('半径（像素）', 'Radius (px)')}
           <input
             className="tinput"
             type="number"
@@ -46,9 +80,9 @@ export function SettingsPage(): JSX.Element {
       </div>
 
       <div className="panel">
-        <div className="ph">动画时长</div>
+        <div className="ph">{t('动画时长', 'ANIMATION')}</div>
         <label className="flab">
-          持续（毫秒）
+          {t('持续（毫秒）', 'Duration (ms)')}
           <input
             className="tinput"
             type="number"
@@ -58,11 +92,13 @@ export function SettingsPage(): JSX.Element {
             onChange={(e) => update({ animationDurationMs: Math.max(0, Math.min(1000, Number(e.target.value))) })}
           />
         </label>
-        <p className="note">MVP 不接自定义主题和动画时长，本字段仅写值不生效（v1.1 启用）。</p>
+        <p className="note">
+          {t('MVP 不接自定义主题和动画时长，本字段仅写值不生效（v1.1 启用）。', 'MVP stores this value without applying it (activates in v1.1).')}
+        </p>
       </div>
 
       <div className="panel">
-        <div className="ph">主题</div>
+        <div className="ph">{t('主题', 'THEME')}</div>
         <div className="radios">
           <label>
             <input
@@ -71,7 +107,7 @@ export function SettingsPage(): JSX.Element {
               checked={settings.theme === 'auto'}
               onChange={() => update({ theme: 'auto' })}
             />
-            跟随系统
+            {t('跟随系统', 'System')}
           </label>
           <label>
             <input
@@ -80,7 +116,7 @@ export function SettingsPage(): JSX.Element {
               checked={settings.theme === 'light'}
               onChange={() => update({ theme: 'light' })}
             />
-            浅色
+            {t('浅色', 'Light')}
           </label>
           <label>
             <input
@@ -89,7 +125,7 @@ export function SettingsPage(): JSX.Element {
               checked={settings.theme === 'dark'}
               onChange={() => update({ theme: 'dark' })}
             />
-            深色
+            {t('深色', 'Dark')}
           </label>
         </div>
       </div>
@@ -99,7 +135,7 @@ export function SettingsPage(): JSX.Element {
         <span className="bk tr" />
         <span className="bk bl" />
         <span className="bk br" />
-        <button type="button" className="newbtn">保存设置</button>
+        <button type="button" className="newbtn">{t('保存设置', 'Save Settings')}</button>
       </div>
     </div>
   );
