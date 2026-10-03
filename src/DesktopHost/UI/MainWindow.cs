@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using FlowRing.DesktopHost.Host;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -11,20 +12,21 @@ namespace FlowRing.DesktopHost.UI;
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 /// 关闭按钮只 Hide（不退出 host），退出走托盘菜单。
 ///
-/// v7 关键修复：用 SetVirtualHostNameToFolderMapping 把 dist 目录映射到虚拟 https host，
-/// 再 Navigate 到 https://flowring.local/index.html。这绕开 file:// 协议下 WebView2 的
-/// 多个安全限制（ES module CORS / file access from files / Same-Origin Policy）。
+/// v9 大修复（一次性）：
+/// 1. Navigate URL 改 https://flowring.local/（去掉 /index.html）→ React Router 拿到 '/'
+/// 2. main.tsx 单一 Router + Layout 在 src/Layout.tsx，子路由全在 main.tsx（v9 commit 7a577aa）
+/// 3. 加 ConsoleMessageReceived 把前端 console.log/error/warn 转发到 host log
+/// 4. NavigationCompleted 后注入 JS 拿 { url, title, bodyText.slice, hasLayout, hasHeader }
+///    把结果 log 出来（一次性诊断 — 验证 v9 是否真解决白屏）
 ///
-/// v5 / v6 改用相对路径 + 异步路径 Navigate 后仍白屏（实测），根因是 WebView2 默认禁用
-/// file:// 加载 ES modules（Chromium 154+ 同源策略），React bundle 的 type="module" script
-/// 加载失败 → React 没 mount → 主窗口白屏。
-///
-/// SetVirtualHostNameToFolderMapping 是 Microsoft 官方推荐做法（不需要 disable-web-security），
-/// 把本地文件夹映射为 https:// 虚拟域，浏览器按同源策略允许 ES module 加载。
+/// 历史：
+/// - v7：SetVirtualHostNameToFolderMapping + Navigate https://flowring.local/index.html
+/// - v8：catch-all + 相对路径（失败，仍白屏）
 /// </summary>
 public sealed class MainWindow : Form
 {
     private const string VirtualHost = "flowring.local";
+    private const string RootUrl = $"https://{VirtualHost}/";
 
     private readonly HostController _controller;
     private readonly ILogger<MainWindow> _logger;
@@ -61,15 +63,15 @@ public sealed class MainWindow : Form
             }
         };
 
-        // v7 关键修复：CoreWebView2InitializationCompleted 异步路径回调里
-        // (1) SetVirtualHostNameToFolderMapping 把本地 dist 目录映射成 https://flowring.local
-        // (2) Navigate 到 https://flowring.local/index.html
+        // v9 诊断：把前端 console 输出转发到 host log（避免盲改）
         _webView.CoreWebView2InitializationCompleted += (_, e) =>
         {
             if (e.IsSuccess)
             {
                 _isReady = true;
                 _logger.LogInformation("CoreWebView2 初始化完成");
+                AttachConsoleListener();
+                AttachNavigationListener();
                 if (!string.IsNullOrEmpty(_pendingFrontendDist) && !string.IsNullOrEmpty(_pendingNavigationUri))
                 {
                     try
@@ -124,9 +126,8 @@ public sealed class MainWindow : Form
             return;
         }
 
-        // v7：用虚拟 host + https 避开 file:// 限制
-        var virtualUri = $"https://{VirtualHost}/index.html";
-        _pendingNavigationUri = virtualUri;
+        // v9：Navigate 到 https://flowring.local/（不带 /index.html），让 React Router 拿到 '/'
+        _pendingNavigationUri = RootUrl;
         _pendingFrontendDist = frontendDistPath;
 
         if (_webView.CoreWebView2 is not null)
@@ -137,9 +138,9 @@ public sealed class MainWindow : Form
                     VirtualHost,
                     frontendDistPath,
                     CoreWebView2HostResourceAccessKind.Allow);
-                _webView.CoreWebView2.Navigate(virtualUri);
+                _webView.CoreWebView2.Navigate(RootUrl);
                 _isReady = true;
-                _logger.LogInformation("MainWindow 已 SetVirtualHost + Navigate（同步路径）：{Uri}", virtualUri);
+                _logger.LogInformation("MainWindow 已 SetVirtualHost + Navigate（同步路径）：{Uri}", RootUrl);
             }
             catch (Exception ex)
             {
@@ -148,8 +149,63 @@ public sealed class MainWindow : Form
         }
         else
         {
-            _logger.LogInformation("MainWindow 已存 pending URI，等待 CoreWebView2 异步初始化：{Uri}", virtualUri);
+            _logger.LogInformation("MainWindow 已存 pending URI，等待 CoreWebView2 异步初始化：{Uri}", RootUrl);
         }
+    }
+
+    /// <summary>
+    /// v9 诊断：注册 ConsoleMessageReceived 把前端 console.log/error/warn 转发到 host log。
+    /// 必须在 CoreWebView2 已实例化之后调（CoreWebView2 != null）。
+    /// </summary>
+    private void AttachConsoleListener()
+    {
+        if (_webView.CoreWebView2 is null) return;
+        _webView.CoreWebView2.ConsoleMessage += (_, e) =>
+        {
+            var level = e.Level.ToString();
+            if (e.MessageLevel == CoreWebView2WebErrorStatus.UNKNOWN)
+            {
+                _logger.LogError("[WebView2 console.{Level}] {Message} (line {Line})", level, e.Message, e.Line);
+            }
+            else
+            {
+                _logger.LogInformation("[WebView2 console.{Level}] {Message} (line {Line})", level, e.Message, e.Line);
+            }
+        };
+        _logger.LogInformation("MainWindow ConsoleMessage 监听已注册");
+    }
+
+    /// <summary>
+    /// v9 诊断：NavigationCompleted 后注入 JS 拿页面真实状态（url/title/bodyText/hasLayout）。
+    /// 这样无需打开 DevTools 也能知道 React 是否 mount + Layout 是否渲染。
+    /// </summary>
+    private void AttachNavigationListener()
+    {
+        if (_webView.CoreWebView2 is null) return;
+        _webView.CoreWebView2.NavigationCompleted += async (_, e) =>
+        {
+            _logger.LogInformation("MainWindow NavigationCompleted：status={Status}, httpStatusCode={HttpStatusCode}, url={Uri}",
+                e.WebErrorStatus, e.HttpStatusCode, _webView.CoreWebView2.Source);
+            try
+            {
+                var js = @"JSON.stringify({
+                    url: location.href,
+                    title: document.title,
+                    bodyText: document.body ? document.body.innerText.slice(0, 300) : null,
+                    bodyHTMLLen: document.body ? document.body.innerHTML.length : 0,
+                    hasHeader: !!document.querySelector('header'),
+                    hasNavLink: !!document.querySelector('header a'),
+                    rootChildren: document.getElementById('root')?.children?.length ?? 0
+                })";
+                var json = await _webView.CoreWebView2.ExecuteScriptAsync(js);
+                _logger.LogInformation("MainWindow 页面状态：{Json}", json);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "MainWindow 注入诊断 JS 失败");
+            }
+        };
+        _logger.LogInformation("MainWindow NavigationCompleted 监听已注册");
     }
 
     /// <summary>
