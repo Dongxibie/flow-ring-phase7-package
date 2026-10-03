@@ -28,6 +28,9 @@ public sealed class WebView2Host : IDisposable
     public bool IsInitialized { get; private set; }
     public MainWindow? MainWindow => _mainWindow;
 
+    /// <summary>v21：MainWindow UI 线程就绪（CoreWebView2 初始化完成）后触发。</summary>
+    public event EventHandler? UiReady;
+
     public WebView2Host(HostController controller, ILoggerFactory? loggerFactory = null)
     {
         _controller = controller;
@@ -87,6 +90,7 @@ public sealed class WebView2Host : IDisposable
         // v16 关键修复：实例化 MainWindow 时传 loggerFactory
         // 之前 _mainWindow = new MainWindow(_controller) → loggerFactory=null → NullLogger → 所有 log 被吞
         _mainWindow = new MainWindow(_controller, _loggerFactory);
+        _mainWindow.UiReady += (_, _) => UiReady?.Invoke(this, EventArgs.Empty);
         try
         {
             await _mainWindow.InitializeAsync(frontendDistPath, ct);

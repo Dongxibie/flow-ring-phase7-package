@@ -36,6 +36,9 @@ public sealed class MainWindow : Form
     private const string IndexUrl = $"https://{VirtualHost}/index.html";
 
     private readonly HostController _controller;
+
+    /// <summary>v21：CoreWebView2 初始化完成（UI 线程）后触发——宿主据此创建快捷环弹窗。</summary>
+    public event EventHandler? UiReady;
     private readonly ILogger<MainWindow> _logger;
     private readonly WebView2 _webView = new();
     private volatile bool _isReady;
@@ -78,6 +81,7 @@ public sealed class MainWindow : Form
             if (e.IsSuccess)
             {
                 _isReady = true;
+                UiReady?.Invoke(this, EventArgs.Empty);
                 _logger.LogInformation(
                     "CoreWebView2 初始化完成（线程 {ThreadId}，apartment {Apt}）",
                     Environment.CurrentManagedThreadId,
@@ -184,11 +188,29 @@ public sealed class MainWindow : Form
                     // 验证 JSON + 提取关键字段
                     try
                     {
-                        using var doc = JsonDocument.Parse(json);
-                        var root = doc.RootElement;
-                        var type = root.TryGetProperty("type", out var t) ? t.GetString() : "(no type)";
-                        var state = root.TryGetProperty("state", out var s) ? s.ToString() : "(no state)";
-                        _logger.LogInformation("MainWindow WebMessageReceived [Type={Type}] [State={State}]", type, state);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var type = root.TryGetProperty("type", out var t) ? t.GetString() : "(no type)";
+
+            // v21：动作触发 / 覆盖层关闭 路由到 HostController
+            if (type == "ACTION_TRIGGER")
+            {
+                var code = root.TryGetProperty("code", out var c) ? c.GetString() : null;
+                if (!string.IsNullOrEmpty(code))
+                {
+                    _logger.LogInformation("收到动作触发：{Code}", code);
+                    _ = _controller.ExecuteActionAsync(code);
+                }
+                return;
+            }
+            if (type == "OVERLAY_DONE")
+            {
+                _controller.HideRingOverlay();
+                return;
+            }
+
+            var state = root.TryGetProperty("state", out var s) ? s.ToString() : "(no state)";
+            _logger.LogInformation("MainWindow WebMessageReceived [Type={Type}] [State={State}]", type, state);
                     }
                     catch (JsonException)
                     {
