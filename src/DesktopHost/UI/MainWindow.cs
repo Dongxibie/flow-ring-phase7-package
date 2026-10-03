@@ -9,6 +9,9 @@ namespace FlowRing.DesktopHost.UI;
 /// <summary>
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 /// 关闭按钮只 Hide（不退出 host），退出走托盘菜单。
+/// v6 修复：CoreWebView2InitializationCompleted 异步路径回调里也 Navigate；
+/// v5 实现只在同步路径（_webView.CoreWebView2 is not null）调 Navigate，
+/// 异步路径下 CoreWebView2 已赋值但回调没触发 Navigate → 主窗口白屏。
 /// </summary>
 public sealed class MainWindow : Form
 {
@@ -16,6 +19,7 @@ public sealed class MainWindow : Form
     private readonly ILogger<MainWindow> _logger;
     private readonly WebView2 _webView = new();
     private volatile bool _isReady;
+    private string? _pendingNavigationUri;
 
     public MainWindow(HostController controller, ILoggerFactory? loggerFactory = null)
     {
@@ -45,13 +49,21 @@ public sealed class MainWindow : Form
             }
         };
 
-        // 关键修复：注册 CoreWebView2 初始化完成回调，在异步初始化完成后才设 _isReady
+        // v6 关键修复：CoreWebView2InitializationCompleted 异步路径回调里也 Navigate。
+        // 同步路径下 InitializeAsync 内 await EnsureCoreWebView2Async 已完成，CoreWebView2 已赋值，
+        // Navigate 在 InitializeAsync 内同步调。但异步路径下 EnsureCoreWebView2Async 在回调里
+        // 完成，CoreWebView2 在回调触发时才赋值，必须在回调里 Navigate，否则主窗口白屏。
         _webView.CoreWebView2InitializationCompleted += (_, e) =>
         {
             if (e.IsSuccess)
             {
                 _isReady = true;
                 _logger.LogInformation("CoreWebView2 初始化完成");
+                if (!string.IsNullOrEmpty(_pendingNavigationUri))
+                {
+                    _webView.CoreWebView2?.Navigate(_pendingNavigationUri);
+                    _logger.LogInformation("MainWindow 异步路径已 Navigate：{Uri}", _pendingNavigationUri);
+                }
             }
             else
             {
@@ -93,16 +105,20 @@ public sealed class MainWindow : Form
         }
 
         var fileUri = new Uri(indexPath).AbsoluteUri;
+        _pendingNavigationUri = fileUri;
 
-        // 关键修复：用 CoreWebView2InitializationCompleted 回调控制 _isReady
-        // 这里只触发 Navigate，真正的加载完成事件在回调里
+        // 同步路径：CoreWebView2 在 await 完成后已赋值（WinForms WebView2 在已创建 Environment 后是同步路径）
         if (_webView.CoreWebView2 is not null)
         {
             _webView.CoreWebView2.Navigate(fileUri);
-            _isReady = true;  // CoreWebView2 已存在（同步路径）
+            _isReady = true;
+            _logger.LogInformation("MainWindow 已请求加载前端（同步路径）：{Uri}", fileUri);
         }
-        // 否则等 CoreWebView2InitializationCompleted 回调里设
-        _logger.LogInformation("MainWindow 已请求加载前端：{Uri}", fileUri);
+        else
+        {
+            // 异步路径：等 CoreWebView2InitializationCompleted 回调里 Navigate
+            _logger.LogInformation("MainWindow 已存 pending URI，等待 CoreWebView2 异步初始化：{Uri}", fileUri);
+        }
     }
 
     /// <summary>
