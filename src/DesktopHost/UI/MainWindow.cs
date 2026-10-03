@@ -11,19 +11,22 @@ namespace FlowRing.DesktopHost.UI;
 /// 主窗口：WebView2 的唯一宿主，承载前端 SPA。
 /// 关闭按钮只 Hide（不退出 host），退出走托盘菜单。
 ///
-/// v9 大修复（一次性）：
-/// 1. Navigate URL 改 https://flowring.local/（去掉 /index.html）→ React Router 拿到 '/'
-/// 2. main.tsx 单一 Router + Layout 在 src/Layout.tsx，子路由全在 main.tsx（v9 commit 7a577aa）
-/// 3. NavigationCompleted 后注入 JS 拿 { url, title, bodyText.slice, hasLayout, hasHeader }
-///    把结果 log 出来（一次性诊断 — 验证 v9 是否真解决白屏）
+/// v10 大修复（一次性）：
+/// 1. WebView2 Navigate URL 改回 https://flowring.local/index.html（v9 改 '/' 失败 → ERR_ACCESS_DENIED）
+///    SDK 1.0.2651.64 SetVirtualHostNameToFolderMapping 没 defaultDocument 重载（reflection 验证），
+///    WebView2 不会自动 fallback 到 index.html
+/// 2. main.tsx 改 path '*' catch-all（v10 commit 268de9cb）+ Layout element + children 相对路径
+///    让任何路径（包括 /index.html、/studio 等）都进 Layout
+/// 3. NavigationCompleted 后注入 JS 拿 {url, title, bodyText.slice, hasLayout, hasHeader} 把结果 log
 ///
-/// v9 修：移除 ConsoleMessage 监听（Microsoft.Web.WebView2 1.0.2651.64 SDK 不含此事件）
-/// 改用 NavigationCompleted + 注入 JS 间接拿前端 console 错误（用 error 事件捕获）。
+/// v9 → v10 调整：
+/// - v9 Navigate https://flowring.local/ → ERR_ACCESS_DENIED（实测）
+/// - v10 Navigate https://flowring.local/index.html + main.tsx catch-all → 任意路径进 Layout
 /// </summary>
 public sealed class MainWindow : Form
 {
     private const string VirtualHost = "flowring.local";
-    private const string RootUrl = $"https://{VirtualHost}/";
+    private const string IndexUrl = $"https://{VirtualHost}/index.html";
 
     private readonly HostController _controller;
     private readonly ILogger<MainWindow> _logger;
@@ -120,8 +123,8 @@ public sealed class MainWindow : Form
             return;
         }
 
-        // v9：Navigate 到 https://flowring.local/（不带 /index.html），让 React Router 拿到 '/'
-        _pendingNavigationUri = RootUrl;
+        // v10：Navigate 到 https://flowring.local/index.html（确保 HTML 加载成功）
+        _pendingNavigationUri = IndexUrl;
         _pendingFrontendDist = frontendDistPath;
 
         if (_webView.CoreWebView2 is not null)
@@ -132,9 +135,9 @@ public sealed class MainWindow : Form
                     VirtualHost,
                     frontendDistPath,
                     CoreWebView2HostResourceAccessKind.Allow);
-                _webView.CoreWebView2.Navigate(RootUrl);
+                _webView.CoreWebView2.Navigate(IndexUrl);
                 _isReady = true;
-                _logger.LogInformation("MainWindow 已 SetVirtualHost + Navigate（同步路径）：{Uri}", RootUrl);
+                _logger.LogInformation("MainWindow 已 SetVirtualHost + Navigate（同步路径）：{Uri}", IndexUrl);
             }
             catch (Exception ex)
             {
@@ -143,13 +146,12 @@ public sealed class MainWindow : Form
         }
         else
         {
-            _logger.LogInformation("MainWindow 已存 pending URI，等待 CoreWebView2 异步初始化：{Uri}", RootUrl);
+            _logger.LogInformation("MainWindow 已存 pending URI，等待 CoreWebView2 异步初始化：{Uri}", IndexUrl);
         }
     }
 
     /// <summary>
-    /// v9 诊断：NavigationCompleted 后注入 JS 拿页面真实状态（url/title/bodyText/hasLayout/hasHeader/rootChildren）。
-    /// 这样无需打开 DevTools 也能知道 React 是否 mount + Layout 是否渲染。
+    /// v10 诊断：NavigationCompleted 后注入 JS 拿页面真实状态（url/title/bodyText/hasLayout/hasHeader/rootChildren）。
     /// </summary>
     private void AttachNavigationListener()
     {
