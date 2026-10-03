@@ -14,18 +14,22 @@ import { useFlowStore } from './store/flowStore';
 // v18.4 全局异常 handler 抓到了，但 v18.4 修法本身失败（dump 不能 host 主动调）。
 //
 // v18.5 改法：使用 WebView2 推荐的双向通信模式
-// - 前端 useEffect 在 mount 后调 window.chrome.webview2.postMessage(JSON.stringify({type:'PAGE_STATE', state:{...}}))
+// - 前端 useEffect 在 mount 后调 window.chrome.webview.postMessage(JSON.stringify({type:'PAGE_STATE', state:{...}}))
 // - host 监听 CoreWebView2.WebMessageReceived event handler
 // - 通信永远由前端发起，host 只监听事件——彻底避免 host 主动访问 CoreWebView2 在非 STA 线程
+//
+// v19 修法：API 名错误——WebView2 暴露给 JS 的是 window.chrome.webview（没有 "2"），
+// 之前检查 window.chrome.webview2 在真实 WebView2 环境永远为 undefined → postMessage 从未发出
+// → host WebMessageReceived 永远收不到（启动包事实 11/16/17）。
 //
 // 还用了所有 console.error / window.onerror 拦截并通过 postMessage 上报：
 // - 前端 JS 错误 → host log（不用 ConsoleMessage 监听，SDK 1.0.2792 不支持）
 type PageName = 'profiles' | 'studio' | 'flow-code' | 'settings';
 
 function postState(state: Record<string, unknown>): void {
-  if (typeof window !== 'undefined' && window.chrome?.webview2) {
+  if (typeof window !== 'undefined' && window.chrome?.webview) {
     try {
-      window.chrome.webview2.postMessage(JSON.stringify({ type: 'PAGE_STATE', state }));
+      window.chrome.webview.postMessage(JSON.stringify({ type: 'PAGE_STATE', state }));
     } catch (e) {
       // 静默失败
     }

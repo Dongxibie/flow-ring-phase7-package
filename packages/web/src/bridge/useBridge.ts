@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type {
   ProfileListEntry,
   StudioSavePayload,
@@ -9,7 +9,7 @@ import type {
 declare global {
   interface Window {
     chrome?: {
-      webview2?: {
+      webview?: {
         postMessage(json: string): void;
         addEventListener(event: 'message', handler: (e: { data: string }) => void): void;
       };
@@ -32,7 +32,8 @@ export interface BridgeApi {
 }
 
 function isWebView2(): boolean {
-  return typeof window !== 'undefined' && window.chrome?.webview2 !== undefined;
+  // v19 修复：真实 API 是 window.chrome.webview（没有 "2"）
+  return typeof window !== 'undefined' && window.chrome?.webview !== undefined;
 }
 
 export function useBridge(): BridgeApi {
@@ -40,10 +41,10 @@ export function useBridge(): BridgeApi {
   const handlersRef = useRef<Set<(json: string) => void>>(new Set());
 
   useEffect(() => {
-    if (!inWv2 || !window.chrome?.webview2) {
+    if (!inWv2 || !window.chrome?.webview) {
       return;
     }
-    const wv2 = window.chrome.webview2;
+    const wv2 = window.chrome.webview;
     const onMsg = (e: { data: string }) => {
       handlersRef.current.forEach((h: (data: string) => void) => h(e.data));
     };
@@ -55,8 +56,8 @@ export function useBridge(): BridgeApi {
 
   const send = useCallback((msg: unknown) => {
     const json = JSON.stringify(msg);
-    if (inWv2 && window.chrome?.webview2) {
-      window.chrome.webview2.postMessage(json);
+    if (inWv2 && window.chrome?.webview) {
+      window.chrome.webview.postMessage(json);
     } else {
       console.log('[useBridge:stub]', json);
     }
@@ -134,7 +135,12 @@ export function useBridge(): BridgeApi {
     };
   }, []);
 
-  return {
+  // v19 白屏根因修复：useBridge() 每次渲染都返回新的对象字面量 →
+  // 消费方 useEffect 依赖 [bridge] 时每次渲染都判定依赖变化 → effect 重跑 →
+  // listProfiles() 返回新数组 → setProfiles → 再渲染 → 无限循环（约 1.2 万次/秒）。
+  // 微任务自续队的循环饿死渲染器主线程 → 永远走不到绘制帧 → 白屏。
+  // useMemo 让 bridge 引用跨渲染稳定，循环从根上断掉。
+  return useMemo(() => ({
     isInWebView2: inWv2,
     listProfiles,
     loadStudio,
@@ -142,5 +148,5 @@ export function useBridge(): BridgeApi {
     exportFlowCode,
     importFlowCode,
     onWebMessage,
-  };
+  }), [inWv2, listProfiles, loadStudio, saveStudio, exportFlowCode, importFlowCode, onWebMessage]);
 }

@@ -46,6 +46,10 @@ public sealed class MainWindow : Form
     {
         _controller = controller;
         _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<MainWindow>();
+        _logger.LogInformation(
+            "MainWindow 构造（线程 {ThreadId}，apartment {Apt}）",
+            Environment.CurrentManagedThreadId,
+            Thread.CurrentThread.GetApartmentState());
 
         Text = "Flow Ring";
         Width = 1200;
@@ -74,7 +78,11 @@ public sealed class MainWindow : Form
             if (e.IsSuccess)
             {
                 _isReady = true;
-                _logger.LogInformation("CoreWebView2 初始化完成");
+                _logger.LogInformation(
+                    "CoreWebView2 初始化完成（线程 {ThreadId}，apartment {Apt}）",
+                    Environment.CurrentManagedThreadId,
+                    Thread.CurrentThread.GetApartmentState());
+                AttachDiagnostics();
                 AttachWebMessageListener();
                 if (!string.IsNullOrEmpty(_pendingFrontendDist) && !string.IsNullOrEmpty(_pendingNavigationUri))
                 {
@@ -105,6 +113,57 @@ public sealed class MainWindow : Form
         {
             _logger.LogInformation("MainWindow Load 完成，host 启动链路全部就绪");
         };
+    }
+
+    /// <summary>
+    /// v19 诊断：只采集证据，不做修复性改动。
+    /// 1. 打开 DevTools 窗口（前端 console 真实错误）
+    /// 2. WebResourceRequested（JS/CSS 资源是否被请求）
+    /// 3. Navigation/ContentLoading/DOMContentLoaded/ProcessFailed（加载生命周期）
+    /// </summary>
+    private void AttachDiagnostics()
+    {
+        if (_webView.CoreWebView2 is null) return;
+        var core = _webView.CoreWebView2;
+
+        try
+        {
+            core.Settings.AreDevToolsEnabled = true;
+            // v19 收尾：自动弹 DevTools 是诊断行为，默认关；需要时设 FLOWRING_DEVTOOLS=1 再启动
+            if (Environment.GetEnvironmentVariable("FLOWRING_DEVTOOLS") == "1")
+            {
+                core.OpenDevToolsWindow();
+                _logger.LogInformation("DevTools 窗口已打开（FLOWRING_DEVTOOLS=1）");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "打开 DevTools 窗口失败");
+        }
+
+        try
+        {
+            core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+            core.WebResourceRequested += (_, e) =>
+                _logger.LogInformation("WebResource 请求：{Uri}", e.Request.Uri);
+            _logger.LogInformation("WebResourceRequested 监听已注册");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "注册 WebResourceRequested 失败");
+        }
+
+        core.NavigationStarting += (_, e) =>
+            _logger.LogInformation("NavigationStarting：{Uri}", e.Uri);
+        core.NavigationCompleted += (_, e) =>
+            _logger.LogInformation(
+                "NavigationCompleted：IsSuccess={IsSuccess} Http={Http} ErrorStatus={Err}",
+                e.IsSuccess, e.HttpStatusCode, e.WebErrorStatus);
+        core.ContentLoading += (_, _) => _logger.LogInformation("ContentLoading");
+        core.DOMContentLoaded += (_, _) => _logger.LogInformation("DOMContentLoaded");
+        core.ProcessFailed += (_, e) =>
+            _logger.LogError("ProcessFailed：{Kind}", e.ProcessFailedKind);
+        _logger.LogInformation("生命周期监听已注册（Navigation/ContentLoading/DOMContentLoaded/ProcessFailed）");
     }
 
     /// <summary>
