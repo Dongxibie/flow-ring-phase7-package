@@ -1,0 +1,172 @@
+/* Flow Ring — 暗色编辑排版主题（v20）
+   风格来源：AI空间样例 08/09 视觉稿定稿版
+   角落锚点 · 大衬线标题 · 细线索引行 · 橄榄强调 · 整环切割玻璃 */
+
+:root{
+  --bg:#171614;
+  --ink:#ffffff;
+  --ink70:rgba(255,255,255,.7);
+  --ink55:rgba(255,255,255,.55);
+  --ink40:rgba(255,255,255,.4);
+  --hair:rgba(255,255,255,.08);
+  --olive:#DBDDA1;
+  --olive45:rgba(219,221,161,.45);
+  --fill:#63624B;
+  --fill-hover:#73725A;
+  --serif:'Noto Serif SC','Source Han Serif SC',serif;
+  --mono:'JetBrains Mono','Cascadia Mono',Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--serif);
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font-family:var(--mono)}
+
+.stage{position:fixed;inset:0;overflow:hidden;background:var(--bg)}
+
+/* ── 左上品牌 / 右上微文 ── */
+.brand{position:absolute;top:44px;left:48px;z-index:5}
+.brand .wm{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.3em}
+.brand .sub{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--ink40);margin-top:8px}
+.blurb{position:absolute;top:44px;right:48px;z-index:5;max-width:260px;text-align:right;
+  font-family:var(--mono);font-size:10px;line-height:1.9;letter-spacing:.14em;
+  color:var(--ink70);white-space:pre-line}
+
+/* ── 大标题区 ── */
+.hero{position:absolute;left:48px;top:29%;max-width:440px;z-index:4}
+.hero .eyebrow{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.28em;color:var(--olive)}
+.hero h1{font-weight:900;font-size:96px;line-height:.95;letter-spacing:-2px;margin-top:16px}
+.hero .desc{font-weight:300;font-size:14px;line-height:2;color:var(--olive);
+  margin-top:22px;max-width:400px;white-space:pre-line}
+.hero.compact{top:110px;max-width:360px}
+.hero.compact h1{font-size:60px;letter-spacing:-1px}
+.hero.compact .desc{font-size:13px;max-width:300px;margin-top:16px}
+
+/* ── 底部导航 ── */
+.nav{position:absolute;left:48px;bottom:44px;display:flex;gap:32px;z-index:5}
+.nav button{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--ink55);
+  position:relative;padding-top:10px;transition:color .3s}
+.nav button .no{color:var(--ink40);margin-right:6px;font-size:10px}
+.nav button:hover{color:var(--ink)}
+.nav button.on{color:var(--olive);font-weight:500}
+.nav button.on::before{content:"";position:absolute;top:0;left:0;width:18px;height:18px;
+  border-top:2px solid var(--olive);border-left:2px solid var(--olive)}
+
+/* ── 右下计数器 ── */
+.counter{position:absolute;right:48px;bottom:36px;text-align:right;z-index:4}
+.counter .n{font-weight:900;font-size:84px;line-height:.9;letter-spacing:-2px}
+.counter .l{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--ink55);margin-top:8px}
+
+/* ── 页面通用区（右栏） ── */
+.page{position:absolute;left:min(560px,50%);right:48px;top:180px;bottom:140px;
+  overflow-y:auto;scrollbar-width:none;z-index:3}
+.page::-webkit-scrollbar{display:none}
+.stack{display:flex;flex-direction:column}
+.err{color:#e08a8a;font-family:var(--mono);font-size:12px;letter-spacing:.05em;margin-bottom:12px}
+
+/* 档案索引行 */
+.erow{display:flex;align-items:center;gap:12px;border-top:1px solid var(--hair);padding:20px 8px}
+.erow:last-of-type{border-bottom:1px solid var(--hair)}
+.erow .idx{font-family:var(--mono);font-size:11px;color:var(--ink40);letter-spacing:.1em}
+.erow .name{font-weight:700;font-size:20px;letter-spacing:-.5px;white-space:nowrap}
+.erow .pid{font-family:var(--mono);font-size:11px;color:var(--ink40);letter-spacing:.06em;white-space:nowrap}
+.erow .sp{flex:1}
+.tag{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--olive);
+  border:1px solid var(--olive45);padding:4px 10px;white-space:nowrap}
+.acts{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--ink55);white-space:nowrap}
+.acts b{font-weight:400;color:var(--olive);cursor:pointer}
+
+/* 括角按钮 */
+.newbtn-wrap{position:relative;width:fit-content;margin-top:30px}
+.newbtn{background:var(--fill);color:var(--olive);font-family:var(--mono);font-size:12px;
+  letter-spacing:.2em;padding:13px 32px;transition:background .3s;cursor:pointer}
+.newbtn:hover{background:var(--fill-hover)}
+.bk{position:absolute;width:12px;height:12px;border:0 solid var(--olive)}
+.bk.tl{top:-5px;left:-5px;border-top-width:2px;border-left-width:2px}
+.bk.tr{top:-5px;right:-5px;border-top-width:2px;border-right-width:2px}
+.bk.bl{bottom:-5px;left:-5px;border-bottom-width:2px;border-left-width:2px}
+.bk.br{bottom:-5px;right:-5px;border-bottom-width:2px;border-right-width:2px}
+
+/* 编辑面板（流码 / 设置 / 属性） */
+.panel{border-top:1px solid var(--hair);padding:18px 4px 22px}
+.panel + .panel{margin-top:8px}
+.ph{font-family:var(--mono);font-size:11px;letter-spacing:.26em;color:var(--ink55);margin-bottom:14px}
+.flab{font-family:var(--mono);font-size:12px;color:var(--ink70);letter-spacing:.06em;
+  display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.flab.chk{display:flex;align-items:center;gap:8px}
+.frow{display:flex;gap:24px;flex-wrap:wrap}
+select,.tinput{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
+  color:var(--ink);font-size:12px;padding:8px 10px;outline:none}
+select:focus,.tinput:focus{border-color:var(--olive45)}
+.tinput.w{width:100%;margin-top:10px}
+textarea.codebox{width:100%;min-height:110px;background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.10);color:var(--ink);font-family:var(--mono);
+  font-size:12px;line-height:1.6;padding:10px;outline:none;resize:vertical;margin:10px 0}
+.fbtn{background:var(--fill);color:var(--olive);font-family:var(--mono);font-size:12px;
+  letter-spacing:.18em;padding:10px 24px;transition:background .3s;border:none;cursor:pointer}
+.fbtn:hover{background:var(--fill-hover)}
+.fbtn:disabled{opacity:.45;cursor:default}
+.fbtn.ghost{background:transparent;border:1px solid rgba(255,255,255,.16);color:var(--ink70)}
+.fbtn.ghost:hover{background:rgba(255,255,255,.06)}
+.btnrow{display:flex;gap:10px;margin-top:14px}
+.note{font-family:var(--mono);font-size:10px;color:var(--ink40);letter-spacing:.05em;
+  margin-top:8px;line-height:1.8}
+.radios{display:flex;gap:18px;font-family:var(--mono);font-size:12px;color:var(--ink70)}
+.radios label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.status-ok{color:#8fce9d;font-family:var(--mono);font-size:12px;margin-top:12px}
+.status-err{color:#e08a8a;font-family:var(--mono);font-size:12px;margin-top:12px}
+
+/* ── 整环切割（环工作室） ── */
+.studio{position:absolute;inset:0;z-index:3}
+.ringwrap{position:absolute;left:54%;top:54%;width:0;height:0}
+.ring{position:absolute;left:-250px;top:-250px;width:500px;height:500px}
+.rg{position:absolute;inset:0;border-radius:50%;
+  -webkit-mask:radial-gradient(farthest-side,transparent 139px,#000 140px);
+  mask:radial-gradient(farthest-side,transparent 139px,#000 140px)}
+.rg-glass{background:rgba(255,255,255,.075);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:0 14px 34px rgba(0,0,0,.35)}
+.rg-cuts{background:repeating-conic-gradient(from -1.6deg,var(--bg) 0deg 3.2deg,transparent 3.2deg 45deg)}
+.rg-active{background:rgba(219,221,161,.16)}
+.rg-rim{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.16)}
+.rg-rim-in{position:absolute;inset:140px;border-radius:50%;border:1px solid rgba(255,255,255,.12)}
+.core{position:absolute;left:-28px;top:-28px;width:56px;height:56px;border-radius:50%;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.core i{width:10px;height:10px;border-radius:50%;background:var(--olive)}
+
+.lbl{position:absolute;transform:translate(-50%,-50%);width:150px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;cursor:pointer}
+.lbl .d{font-family:var(--mono);font-size:9px;letter-spacing:.3em;color:var(--ink40)}
+.lbl .nm{font-weight:500;font-size:14px;letter-spacing:-.3px}
+.lbl .nm.empty{color:var(--ink40);font-weight:300}
+.lbl .key{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink70);
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);
+  border-radius:5px;padding:3px 9px}
+.lbl.on .nm{color:var(--olive)}
+.lbl.on .key{color:var(--olive);border-color:var(--olive45);background:rgba(219,221,161,.08)}
+.selframe{position:absolute;inset:-7px -9px;border:2px solid rgba(255,255,255,.9);pointer-events:none}
+.sd{position:absolute;width:6px;height:6px;background:#fff}
+.sd.tl{left:-3px;top:-3px}
+.sd.tr{right:-3px;top:-3px}
+.sd.bl{left:-3px;bottom:-3px}
+.sd.br{right:-3px;bottom:-3px}
+.sd.tm{left:50%;top:-3px;transform:translateX(-50%)}
+.sd.bm{left:50%;bottom:-3px;transform:translateX(-50%)}
+.sd.lm{left:-3px;top:50%;transform:translateY(-50%)}
+.sd.rm{right:-3px;top:50%;transform:translateY(-50%)}
+
+.slotpanel{position:absolute;right:48px;top:140px;width:330px;
+  max-height:calc(100% - 260px);overflow-y:auto;scrollbar-width:none}
+.slotpanel::-webkit-scrollbar{display:none}
+.slotpanel .cur{font-size:13px;margin-bottom:8px}
+.slotpanel .hint-p{font-weight:300;font-size:12px;color:var(--ink55);line-height:1.9}
+.slotpanel .ph.second{margin-top:22px}
+.lib{list-style:none}
+.lib li{font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--ink70);
+  border:1px solid rgba(255,255,255,.10);padding:8px 10px;margin-bottom:6px;cursor:grab;
+  transition:border-color .3s}
+.lib li:hover{border-color:var(--olive45)}
