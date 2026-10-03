@@ -129,8 +129,12 @@ public sealed class MainWindow : Form
         try
         {
             core.Settings.AreDevToolsEnabled = true;
-            core.OpenDevToolsWindow();
-            _logger.LogInformation("DevTools 窗口已打开");
+            // v19 收尾：自动弹 DevTools 是诊断行为，默认关；需要时设 FLOWRING_DEVTOOLS=1 再启动
+            if (Environment.GetEnvironmentVariable("FLOWRING_DEVTOOLS") == "1")
+            {
+                core.OpenDevToolsWindow();
+                _logger.LogInformation("DevTools 窗口已打开（FLOWRING_DEVTOOLS=1）");
+            }
         }
         catch (Exception ex)
         {
