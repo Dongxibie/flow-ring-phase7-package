@@ -7,25 +7,21 @@ import { RingStudioPage } from './pages/RingStudio/RingStudioPage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { FlowCodePage } from './pages/FlowCode/FlowCodePage';
 
-// v10 修法：WebView2 Navigate 必须带文件名（/index.html），不能裸路径（/）
+// v11 修法：children catch-all path '*' 兜底，让任意路径都能渲染 Page
 //
-// v9 实测：WebView2 Navigate 到 https://flowring.local/ 报 ERR_ACCESS_DENIED
-// - SetVirtualHostNameToFolderMapping 把 dist 映射成虚拟域
-// - 但裸 / 路径在 dist 里没文件（只有 index.html 等）
-// - SDK 1.0.2651.64 没有 defaultDocument 重载（reflection 验证）
-// - WebView2 不会自动 fallback 到 index.html → ERR_ACCESS_DENIED
+// v10 修法回顾：
+// - 顶层 path: '*' catch-all + Layout element
+// - children 路径：index + 'studio' + 'profiles' + 'flow-code' + 'settings'
+// - WebView2 Navigate 到 https://flowring.local/index.html → HTML 加载成功
+// - 顶层 catch-all 匹配 → Layout 渲染 → 顶部 NavLink + Outlet
+// - 但 children index 路径是父 '*' + '/'（即 '*'），实际路径 '/index.html' 不匹配
+// - 实际行为：Layout 渲染成功 + Outlet 不渲染 → 主窗口顶部 OK，主体空白
 //
-// v10 修：catch-all 顶层 + Layout element + children 相对路径
-// - WebView2 Navigate 改回 https://flowring.local/index.html（确保 HTML 加载成功）
-// - 顶层 path: '*' catch-all 让任何路径（/index.html、/studio 等）都进 Layout
-// - children 路径相对 catch-all（'studio' 不是 '/studio'），匹配 React Router v6 嵌套规则
-// - Outlet 渲染 children（按相对路径匹配）
-// - /index.html 进入时，path: '*' 渲染 Layout，children index 默认匹配 → ProfileManagerPage
-//
-// 测试预期：
-// - WebView2 Navigate 到 https://flowring.local/index.html → HTML 加载
-// - 顶层 catch-all 匹配 → Layout 渲染
-// - 主窗口看到顶部 NavLink 四条 + 主体 ProfileManagerPage 占位内容
+// v11 修：children 末尾加 path: '*' catch-all
+// - 任意不匹配的路径（如 /index.html、/index.html#studio 等）都进 catch-all child
+// - 默认渲染 ProfileManagerPage（最常用页面）
+// - 显式路径（/studio、/profiles、/flow-code、/settings）优先匹配各自子路由
+// - 不依赖 host 端 URL 替换，纯粹前端路由修复
 const routes: RouteObject[] = [
   {
     path: '*',
@@ -36,6 +32,7 @@ const routes: RouteObject[] = [
       { path: 'profiles', element: <ProfileManagerPage /> },
       { path: 'flow-code', element: <FlowCodePage /> },
       { path: 'settings', element: <SettingsPage /> },
+      { path: '*', element: <ProfileManagerPage /> },
     ],
   },
 ];
