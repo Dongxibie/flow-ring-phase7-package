@@ -30,6 +30,10 @@ internal static class NativeMethods
     internal const int WM_XBUTTONUP = 0x020C;
     internal const int WM_MOUSEMOVE = 0x0200;
 
+    // -- 键盘消息（低级键盘钩子，v24：ESC 关闭覆盖层）
+    internal const int WM_KEYDOWN = 0x0100;
+    internal const int WM_SYSKEYDOWN = 0x0104;
+
     // -- Hotkey 修饰键
     internal const uint MOD_ALT = 0x0001;
     internal const uint MOD_CONTROL = 0x0002;
@@ -67,6 +71,16 @@ internal static class NativeMethods
     {
         internal POINT pt;
         internal uint mouseData;
+        internal uint flags;
+        internal uint time;
+        internal nint dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KBDLLHOOKSTRUCT
+    {
+        internal uint vkCode;
+        internal uint scanCode;
         internal uint flags;
         internal uint time;
         internal nint dwExtraInfo;

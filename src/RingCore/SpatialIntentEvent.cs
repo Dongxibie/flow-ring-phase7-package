@@ -45,6 +45,12 @@ public readonly record struct SpatialIntentEvent(
 public readonly record struct RawInputEvent(int RawX, int RawY, long TimestampMs);
 
 /// <summary>
+/// v24：原始鼠标按钮按下事件（左/右键），专供覆盖层"点击环外关闭"判定；
+/// 不经过状态机、不参与吞键决策。
+/// </summary>
+public readonly record struct RawButtonEvent(int X, int Y, bool IsRight);
+
+/// <summary>
 /// v23：触发键释放事件，携带松开点坐标（ReleaseX/ReleaseY）。
 /// WasHold=true 表示长按释放（执行方向选择）；false 表示快速点按释放（进入驻留/菜单模式）。
 /// 长按判定 = 释放时长 ≥ 150ms（见 MouseInputAdapter）。

@@ -32,10 +32,10 @@ public sealed class HostController : IDisposable
     private RingOverlayForm? _ringOverlay;
     private int _ringSizePx = 500; // 环径，前端 RING_SIZE 消息实时更新
     private int _deadZonePx = 56;  // v24：释放死区半径（px），前端 DEAD_ZONE 消息实时更新
-    // v23：跟随/释放状态（按住=手势模式：环追光标，松开执行方向）
+    // v24：手势状态（按住=手势：环【固定】在按下点；光标从环心向外拖=选择方向，松开执行）
     private bool _ringHolding;
     private long _lastFollowMs;
-    private RingPoint? _pressOrigin; // v24：本次按下的起点（方向判定与相对偏移的原点）
+    private Point? _ringCenter; // 本次触发的环心（屏幕物理像素坐标，方向判定/高亮偏移的原点）
     private volatile bool _isPaused;
     private volatile bool _isActive;
     private bool _disposed;
@@ -75,6 +75,8 @@ public sealed class HostController : IDisposable
         _bridge.Input.IntentEmitted += OnSpatialIntent;
         _bridge.Input.InputReleased += OnInputReleased;
         _bridge.Input.RawInputEmitted += OnRawInput;
+        _bridge.Input.RawButtonDown += OnRawButtonDown; // v24：点击环外关闭
+        _bridge.Input.EscapePressed += OnEscapePressed; // v24：ESC 关闭（非激活浮层的键盘路径）
 
         _logger.LogInformation("Host 启动完成，托盘图标已显示");
     }
@@ -254,12 +256,47 @@ public sealed class HostController : IDisposable
         var origin = e.OriginPoint ?? new RingPoint(0, 0);
         _logger.LogInformation("快捷环触发（{Trigger}）：({X},{Y})",
             e.TriggerType, origin.X, origin.Y);
-        _pressOrigin = e.OriginPoint; // v24：记录按下点（方向判定/相对偏移的原点）
-        _ringHolding = true; // v23：进入手势模式（环追光标，松开执行方向）
-        _ringOverlay?.ShowRing(_ringSizePx);
+        _ringHolding = true;
+        // v24：环固定在（夹取后的）按下点，环心即方向判定与高亮偏移的原点
+        var center = _ringOverlay?.ShowRing(_ringSizePx);
+        _ringCenter = center ?? new Point((int)origin.X, (int)origin.Y);
     }
 
-    // v23：按住期间环以 lerp 追光标，并把光标相对按下点的偏移回给前端做扇区高亮
+    /// <summary>v24：任意鼠标按键按下——环显示期间点击落在环窗口之外 → 收起覆盖层（点环外关闭）。</summary>
+    private void OnRawButtonDown(object? sender, RawButtonEvent e)
+    {
+        var ring = _ringOverlay;
+        if (ring is null || !ring.Visible)
+        {
+            return;
+        }
+        if (!ring.Bounds.Contains(e.X, e.Y))
+        {
+            _logger.LogInformation("点击环外：关闭快捷环");
+            CloseOverlayFromHost();
+        }
+    }
+
+    /// <summary>v24：全局 ESC——环显示期间收起覆盖层（非激活浮层收不到键盘，改走低级钩子）。</summary>
+    private void OnEscapePressed(object? sender, EventArgs e)
+    {
+        if (_ringOverlay is null || !_ringOverlay.Visible)
+        {
+            return;
+        }
+        _logger.LogInformation("ESC：关闭快捷环");
+        CloseOverlayFromHost();
+    }
+
+    /// <summary>v24：宿主主动收起覆盖层——隐藏窗口并通知页面重置状态。</summary>
+    private void CloseOverlayFromHost()
+    {
+        _ringHolding = false;
+        _ringOverlay?.HideRing();
+        _ringOverlay?.PostToPage("{\"type\":\"OVERLAY_CLOSE\"}");
+    }
+
+    // v24：环固定在按下点不动；把光标相对【环心】的偏移回给前端做扇区高亮（所见即所指）
     private void OnRawInput(object? sender, RawInputEvent e)
     {
         if (!_ringHolding)
@@ -272,10 +309,9 @@ public sealed class HostController : IDisposable
             return; // ~80Hz 节流
         }
         _lastFollowMs = now;
-        _ringOverlay?.FollowCursor(e.RawX, e.RawY); // 先让环追上光标（移动窗口）
-        var origin = _pressOrigin ?? new RingPoint(e.RawX, e.RawY);
-        var dx = e.RawX - (int)origin.X;
-        var dy = e.RawY - (int)origin.Y;
+        var c = _ringCenter ?? new Point(e.RawX, e.RawY);
+        var dx = e.RawX - c.X;
+        var dy = e.RawY - c.Y;
         _ringOverlay?.PostToPage(
             "{\"type\":\"FOLLOW\",\"dx\":" + dx + ",\"dy\":" + dy + "}");
     }
@@ -296,10 +332,10 @@ public sealed class HostController : IDisposable
             return;
         }
 
-        // v24：以按下点为原点做死区/方向判定（释放点相对按下点）
-        var origin = _pressOrigin ?? new RingPoint(e.ReleaseX, e.ReleaseY);
+        // v24：以【环心】为原点做死区/方向判定（与用户看到的指向一致）
+        var c = _ringCenter ?? new Point(e.ReleaseX, e.ReleaseY);
         var decision = ReleaseDecider.Decide(
-            origin, new RingPoint(e.ReleaseX, e.ReleaseY), true, _deadZonePx);
+            new RingPoint(c.X, c.Y), new RingPoint(e.ReleaseX, e.ReleaseY), true, _deadZonePx);
 
         if (decision.Outcome == ReleaseOutcome.Cancel)
         {
@@ -311,9 +347,9 @@ public sealed class HostController : IDisposable
         if (decision.Outcome == ReleaseOutcome.Execute)
         {
             var dir = decision.Direction.ToString();
-            var dx = e.ReleaseX - (int)origin.X;
-            var dy = e.ReleaseY - (int)origin.Y;
-            _logger.LogInformation("长按释放，方向：{Dir}（位移 {Dx},{Dy}）", dir, dx, dy);
+            var dx = e.ReleaseX - c.X;
+            var dy = e.ReleaseY - c.Y;
+            _logger.LogInformation("长按释放，方向：{Dir}（相对环心 {Dx},{Dy}）", dir, dx, dy);
             _ringOverlay?.PostToPage(
                 "{\"type\":\"RELEASE_SELECT\",\"dir\":\"" + dir + "\"}");
         }
@@ -371,6 +407,8 @@ public sealed class HostController : IDisposable
         _bridge.Input.IntentEmitted -= OnSpatialIntent;
         _bridge.Input.InputReleased -= OnInputReleased;
         _bridge.Input.RawInputEmitted -= OnRawInput;
+        _bridge.Input.RawButtonDown -= OnRawButtonDown;
+        _bridge.Input.EscapePressed -= OnEscapePressed;
         _pipeServer.Dispose();
         _webView2.Dispose();
         _ringOverlay?.Dispose();

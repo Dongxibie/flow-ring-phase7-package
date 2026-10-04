@@ -28,6 +28,12 @@ public interface IInputAdapter : IAsyncDisposable
     /// <summary>v23：触发键释放（长按释放=执行方向；快速点按=驻留菜单）。</summary>
     event EventHandler<InputReleasedEvent>? InputReleased;
 
+    /// <summary>v24：任意鼠标按钮按下（左/右键）。用于"点击环外关闭"判定；不吞键。</summary>
+    event EventHandler<RawButtonEvent>? RawButtonDown;
+
+    /// <summary>v24：全局 ESC 按下（环显示期间宿主据此关闭覆盖层）。钩子永远不吞 ESC。</summary>
+    event EventHandler? EscapePressed;
+
     /// <summary>暂停/全屏保护：为 true 时触发键完全放行（不吞键、不发意图）。</summary>
     bool IsSuspended { get; set; }
 
