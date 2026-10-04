@@ -75,6 +75,43 @@ export function newCustomAction(name: string, kind: 'key' | 'app', param: string
   return { id, name, kind, code: 'app-launch', arg: param.trim() };
 }
 
+// ── v25：自定义快捷键构建器 ──
+// 由 UI 的「修饰键按钮 + 主键输入」生成 host 可解析的 code 与展示串。
+// 修饰键固定顺序 ctrl,shift,alt,win；主键 token 统一小写（具名键 esc/f5/up…），
+// 单字符主键（A–Z / 0–9 / 符号键）展示时字母转大写。
+const MOD_ORDER: string[] = ['ctrl', 'shift', 'alt', 'win'];
+const MOD_LABEL: Record<string, string> = { ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', win: 'Win' };
+const NAMED_KEY_LABEL: Record<string, string> = {
+  esc: 'Esc', enter: 'Enter', tab: 'Tab', space: 'Space',
+  up: 'Up', down: 'Down', left: 'Left', right: 'Right',
+  f1: 'F1', f2: 'F2', f3: 'F3', f4: 'F4', f5: 'F5', f6: 'F6',
+  f7: 'F7', f8: 'F8', f9: 'F9', f10: 'F10', f11: 'F11', f12: 'F12',
+};
+
+function hasOwnKey(table: Record<string, string>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
+/** 组合快捷键 code：'key-' + 修饰键（固定顺序 ctrl,shift,alt,win）+ 主键 token。例：Ctrl+Shift+T → 'key-ctrl-shift-t'。 */
+export function composeHotkeyCode(mods: string[], key: string): string {
+  const ordered = MOD_ORDER.filter((m) => mods.some((x) => x.toLowerCase() === m));
+  const token = key.trim().toLowerCase();
+  return ['key', ...ordered, ...(token === '' ? [] : [token])].join('-');
+}
+
+/** 展示用键位串：例 Alt+T → 'Alt+T'、Shift+F10 → 'Shift+F10'、Ctrl+Shift+T → 'Ctrl+Shift+T'。 */
+export function hotkeyLabel(mods: string[], key: string): string {
+  const ordered = MOD_ORDER.filter((m) => mods.some((x) => x.toLowerCase() === m));
+  const s = key.trim();
+  const lower = s.toLowerCase();
+  const display = hasOwnKey(NAMED_KEY_LABEL, lower)
+    ? NAMED_KEY_LABEL[lower]
+    : s.length === 1 && /[a-z]/i.test(s)
+      ? s.toUpperCase()
+      : s;
+  return [...ordered.map((m) => MOD_LABEL[m]), display].filter((x) => x !== '').join('+');
+}
+
 /** 槽位 actionRef 的解析结果：真发给 host 的 code + 可选参数。 */
 export interface ResolvedAction {
   code: string;
