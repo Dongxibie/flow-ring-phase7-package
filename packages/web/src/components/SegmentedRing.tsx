@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 
 // v20.1：整环切割构件（环工作室与右键覆盖层共用）。
 // 尺寸与玻璃不透明度全部参数化（设置页滑杆实时生效）；
@@ -27,6 +27,22 @@ const ANGLE: Record<string, number> = {
   Bottom: 90, BottomLeft: 135, Left: 180, TopLeft: -135,
 };
 
+// v25（视觉方案 C · 极简线框 HUD）：细线、刻度、弧光、指针全部改由内联 SVG 绘制
+// （viewBox 0 0 100 100、圆心 50,50）。几何数值与 design-demos/ring.html 的 variantC() 等比换算：
+// demo 外半径 228 → 这里 47，demo 的像素偏移按比例落到本环上，环尺寸变化时视觉不变形。
+const VIEW = 100; // viewBox 边长（环容器为正方形，1 单位 = size/100 px）
+const R_OUT = 47; // 外圈半径（viewBox 单位）
+const DEMO_R = 228; // demo C 的外半径，用于把 demo 的像素偏移换算成比例
+const DEMO_K = R_OUT / DEMO_R; // demo → 本环的等比系数
+const TICK_GAP = 8 * DEMO_K; // 分界刻度两端各留的缺口（demo：8px）
+const TICK_DEGS = [-22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5]; // 8 条扇区分界线
+const ARC_HALF = 21; // 弧光半跨角（±21°）
+const ARC_W_PX = 5; // 弧光宽度（约 5px，不随环尺寸变粗）
+const OLIVE = '#DBDDA1'; // 橄榄（= CSS 变量 --olive）
+const LINE_OUT = 'rgba(255,255,255,.30)'; // 外圈细线
+const LINE_IN = 'rgba(255,255,255,.18)'; // 内圈细线
+const LINE_TICK = 'rgba(255,255,255,.16)'; // 分界刻度
+
 export interface SegSlot {
   kind: 'empty' | 'action' | 'childRing';
   actionRef?: string;
@@ -35,9 +51,9 @@ export interface SegSlot {
 
 interface SegmentedRingProps {
   size: number; // 外直径 px
-  opacity: number; // 0.25~1，玻璃不透明度倍率
-  bgColor: string; // 切缝颜色（跟随所处界面的底色）
-  darkGlass?: boolean; // v22.2：弹窗模式下环盘用不透明暗玻璃（透明玻璃会被窗口色键挖掉）
+  opacity: number; // 0.25~1，整环不透明度倍率（作用于 .ringwrap；设置页滑杆实时生效）
+  bgColor: string; // 切缝颜色（v25 起无线框外底色，仅为兼容调用方保留）
+  darkGlass?: boolean; // v22.2：弹窗模式下环盘用不透明暗玻璃（v25：同上保留）
   slots: Record<string, SegSlot>;
   selected: string | null;
   hovered?: string | null; // v23：外部高亮方向（手势跟随）
@@ -50,55 +66,74 @@ interface SegmentedRingProps {
   core?: boolean;
 }
 
-const ANNULUS = (ri: number): Record<string, string> => ({
-  WebkitMaskImage: `radial-gradient(farthest-side, transparent ${ri - 1}px, #000 ${ri}px)`,
-  maskImage: `radial-gradient(farthest-side, transparent ${ri - 1}px, #000 ${ri}px)`,
-});
-
 export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
   const r = p.size / 2;
   const ri = Math.round(r * 0.56); // 内圈半径（与 500/140 同比例）
   const lr = (r + ri) / 2; // 标注所在的中带半径
-  const bandLen = r - ri; // 环带厚度（辐条/空槽位中线长度）
-  const glassAlpha = (0.14 * p.opacity).toFixed(3);
-  const glassBg = p.darkGlass
-    ? `rgba(18,20,17,${(0.94 * p.opacity).toFixed(3)})`
-    : `rgba(255,255,255,${glassAlpha})`;
-  const mask = ANNULUS(ri);
   const [hover, setHover] = useState<string | null>(null);
   const lit = (dir: string): boolean => p.selected === dir || hover === dir || p.hovered === dir;
-  // v24：激活扇区【整块高亮】（手势指向/悬停/选中统一走这一层）——
-  // 旧实现只有文字变色与细框，用户看不出到底指向了哪个扇区
+  // v24：激活方向（手势指向/悬停/选中统一走这一层）——v25 起用于外缘弧光、指针与其余方向压暗
   const fillDir = p.hovered ?? hover ?? p.selected;
 
+  // v25：SVG 换算——u 是 1 CSS px 对应的 viewBox 单位，故细线恒为 1px、弧光恒约 5px
+  const u = VIEW / p.size;
+  const riU = R_OUT * (ri / r); // 内圈半径（保持 ri/r 比例不变）
+  const arcDeg = fillDir !== null ? ANGLE[fillDir] : null; // 弧光/指针所在方向角
+  const arcRad = ((arcDeg ?? 0) * Math.PI) / 180;
+  const circ = 2 * Math.PI * R_OUT; // 外圈周长
+  const arcLen = circ * ((ARC_HALF * 2) / 360); // 弧光长度（跨 42°）
+  const arcStart = ((((arcDeg ?? 0) - ARC_HALF) % 360) + 360) % 360; // 弧光起点角（归一到 0~360）
+  const arcStartLen = (circ * arcStart) / 360;
+  const triR = R_OUT - (ARC_W_PX * u) / 2; // 指针锚点：弧光内缘
+  const triX = 50 + Math.cos(arcRad) * triR;
+  const triY = 50 + Math.sin(arcRad) * triR;
+  // 指针形：顶点朝圆心（局部 -x 为内），-8 / +3 / ±6 px 按 demo 比例换算
+  const triD = `M ${-8 * DEMO_K} 0 L ${3 * DEMO_K} ${-6 * DEMO_K} L ${3 * DEMO_K} ${6 * DEMO_K} Z`;
+  const coreD = Math.round(r * 0.667); // 中央细环直径（demo C：半径 = R/3）
+  // v25 修复：整环不透明度经 CSS 变量作用在 .ringwrap 上（滑入动画 keyframes 终点同取该变量，避免动画结束回弹）
+  const ringVars = { '--ring-op': String(p.opacity) } as CSSProperties;
+
   return (
-    <div className="ringwrap">
+    <div className="ringwrap" style={ringVars}>
       <div className="ring" style={{ left: -r, top: -r, width: p.size, height: p.size }}>
-        <div className="rg rg-glass" style={{ background: glassBg, ...mask }} />
-        {fillDir !== null && (
-          <div className="rg rg-active" style={{ clipPath: WEDGE[fillDir], ...mask }} />
-        )}
-        {/* v22：径向竖线切 8 块——8 条边界辐条始终可见 */}
-        {[-22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5].map((deg) => {
-          const rad = (deg * Math.PI) / 180;
-          const mx = Math.cos(rad) * lr;
-          const my = Math.sin(rad) * lr;
-          return (
-            <div
-              key={'spoke-' + deg}
-              className="spoke"
-              style={{
-                // .ring 自身偏移在 (-r,-r)，子元素坐标需以环左上角为原点：+r
-                left: r + mx - 1,
-                top: r + my - bandLen / 2,
-                height: bandLen,
-                transform: `rotate(${deg}deg)`,
-              }}
+        {/* v25：细线框——外圈 1px/.30、内圈 1px/.18、8 条分界刻度两端留缺口（不再有玻璃盘与楔形高亮） */}
+        <svg className="ring-lines" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r={R_OUT} fill="none" stroke={LINE_OUT} strokeWidth={u} />
+          <circle cx="50" cy="50" r={riU} fill="none" stroke={LINE_IN} strokeWidth={u} />
+          {TICK_DEGS.map((d) => {
+            const a = (d * Math.PI) / 180;
+            const c = Math.cos(a);
+            const s = Math.sin(a);
+            return (
+              <line
+                key={'tick-' + d}
+                x1={50 + c * (riU + TICK_GAP)}
+                y1={50 + s * (riU + TICK_GAP)}
+                x2={50 + c * (R_OUT - TICK_GAP)}
+                y2={50 + s * (R_OUT - TICK_GAP)}
+                stroke={LINE_TICK}
+                strokeWidth={u}
+              />
+            );
+          })}
+        </svg>
+        {/* v25：激活方向的外缘弧光（橄榄、圆头、发光由 .ring-glow 的 drop-shadow 提供）+ 指向圆心的指针 */}
+        {arcDeg !== null && (
+          <svg className="ring-glow" viewBox="0 0 100 100">
+            <circle
+              cx="50"
+              cy="50"
+              r={R_OUT}
+              fill="none"
+              stroke={OLIVE}
+              strokeWidth={ARC_W_PX * u}
+              strokeLinecap="round"
+              strokeDasharray={`${arcLen} ${circ - arcLen}`}
+              strokeDashoffset={circ - arcStartLen}
             />
-          );
-        })}
-        <div className="rg-rim" />
-        <div className="rg-rim-in" style={{ inset: ri }} />
+            <path d={triD} fill={OLIVE} transform={`translate(${triX} ${triY}) rotate(${arcDeg ?? 0})`} />
+          </svg>
+        )}
         {p.onSelect !== undefined &&
           EIGHT_DIRECTIONS.map((dir) => (
             <div
@@ -140,24 +175,6 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
             className={'seg' + (on ? ' on' : '') + (fillDir !== null && !on ? ' dim' : '')}
             style={{ left: x, top: y }}
           >
-            {on && (
-              <div className="selframe">
-                <i className="sd tl" /><i className="sd tm" /><i className="sd tr" />
-                <i className="sd lm" /><i className="sd rm" />
-                <i className="sd bl" /><i className="sd bm" /><i className="sd br" />
-              </div>
-            )}
-            {!info && slot?.kind !== 'childRing' && (
-              <div
-                className="spoke mid"
-                style={{
-                  left: r + Math.cos(rad) * lr - 0.5,
-                  top: r + Math.sin(rad) * lr - bandLen / 2,
-                  height: bandLen,
-                  transform: `rotate(${a}deg)`,
-                }}
-              />
-            )}
             <span className={'snm' + (info ? '' : ' empty')}>
               {info
                 ? info.name
@@ -170,8 +187,9 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
         );
       })}
 
+      {/* v25：中央细环（core 为 false 时依旧不渲染） */}
       {p.core !== false && (
-        <div className="core"><i /></div>
+        <div className="core" style={{ width: coreD, height: coreD }} />
       )}
     </div>
   );
