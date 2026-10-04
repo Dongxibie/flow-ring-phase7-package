@@ -50,7 +50,7 @@
 | 1.1 Ring 禁调 OS API | Roslyn Analyzer + RingCore.csproj 无 OS 引用 | ✅ 满足 |
 | 1.2 Action 无 UI 字段 | JSON Schema 校验 | ✅ 满足（ActionDef 只含 Id / Kind / DisplayName / PermissionTier / PayloadJson） |
 | 1.3 Context 不改 Action | IContextEngine 接口签名 | ✅ 满足（NullContextEngine 与 Win32ContextDetector 都只输出 ApplicationContext） |
-| 1.4 UI 禁直访 fs/path | ESLint rule | ✅ 满足（packages/web/.eslintrc.cjs 已加 no-restricted-imports: fs/path/child_process） |
+| 1.4 UI 禁直访 fs/path | ESLint rule | ✅ 满足（packages/web/eslint.config.js 已配 no-restricted-imports: fs/path/child_process） |
 | 1.5 Plugin 走 Host API | MVP 未实现 Plugin（v1.1 预留） | ✅ N/A |
 | 1.6 Studio 不改 Runtime | StudioDocument → Command → ProfileStore | ✅ 满足（Phase 5 Studio 仅写 payload 经 useBridge() 推到 host） |
 
