@@ -30,6 +30,10 @@ public sealed class HostController : IDisposable
     private readonly ActionDispatcher _actions;
     private RingOverlayForm? _ringOverlay;
     private int _ringSizePx = 500; // 环径，前端 RING_SIZE 消息实时更新
+    // v23：跟随/释放状态（按住=手势模式：环追光标，松开执行方向）
+    private bool _ringHolding;
+    private long _lastFollowMs;
+    private (int Dx, int Dy)? _lastOffset;
     private volatile bool _isPaused;
     private volatile bool _isActive;
 
@@ -66,6 +70,8 @@ public sealed class HostController : IDisposable
 
         // v21：侧键长按 → 快捷环弹窗（弹窗本体在 OnUiReady 里于 UI 线程创建）
         _bridge.Input.IntentEmitted += OnSpatialIntent;
+        _bridge.Input.InputReleased += OnInputReleased;
+        _bridge.Input.RawInputEmitted += OnRawInput;
 
         _logger.LogInformation("Host 启动完成，托盘图标已显示");
     }
@@ -213,7 +219,74 @@ public sealed class HostController : IDisposable
         var origin = e.OriginPoint ?? new RingPoint(0, 0);
         _logger.LogInformation("快捷环触发（{Trigger}）：({X},{Y})",
             e.TriggerType, origin.X, origin.Y);
+        _ringHolding = true; // v23：进入手势模式（环追光标，松开执行方向）
+        _lastOffset = null;
         _ringOverlay?.ShowRing(_ringSizePx);
+    }
+
+    // v23：按住期间环以 lerp 追光标，并把光标相对环心的偏移回给前端做扇区高亮
+    private void OnRawInput(object? sender, RawInputEvent e)
+    {
+        if (!_ringHolding)
+        {
+            return;
+        }
+        var now = Environment.TickCount64;
+        if (now - _lastFollowMs < 12)
+        {
+            return; // ~80Hz 节流
+        }
+        _lastFollowMs = now;
+        var (dx, dy) = _ringOverlay?.FollowCursor(e.RawX, e.RawY) ?? (0, 0);
+        _lastOffset = (dx, dy);
+        _ringOverlay?.PostToPage(
+            "{\"type\":\"FOLLOW\",\"dx\":" + dx + ",\"dy\":" + dy + "}");
+    }
+
+    // v23：松开——长按释放执行光标所在方向；快速点按进入驻留菜单模式
+    private void OnInputReleased(object? sender, InputReleasedEvent e)
+    {
+        if (!_ringHolding)
+        {
+            return; // 驻留模式由前端自身交互（点击扇区/ESC）收尾
+        }
+        _ringHolding = false;
+
+        if (!e.WasHold)
+        {
+            // 快速点按：环驻留，等待用户点击扇区（现有菜单模式）
+            _logger.LogInformation("快速点按：快捷环驻留（菜单模式）");
+            return;
+        }
+
+        var offset = _lastOffset ?? (0, 0);
+        var dist = Math.Sqrt(offset.Dx * offset.Dx + offset.Dy * offset.Dy);
+        var dir = dist < 56 ? null : InferDirection(offset.Dx, offset.Dy);
+        if (dir is null)
+        {
+            _logger.LogInformation("死区释放：取消快捷环");
+            _ringOverlay?.HideRing();
+            return;
+        }
+        _logger.LogInformation("长按释放，方向：{Dir}", dir);
+        _ringOverlay?.PostToPage(
+            "{\"type\":\"RELEASE_SELECT\",\"dir\":\"" + dir + "\"}");
+    }
+
+    /// <summary>与前端 inferDirection 同款的 8 向判定（0°=右，顺时针）。</summary>
+    private static string? InferDirection(int dx, int dy)
+    {
+        if (Math.Sqrt(dx * dx + dy * dy) < 16)
+        {
+            return null;
+        }
+        var deg = Math.Atan2(dy, dx) * 180 / Math.PI;
+        if (deg < 0)
+        {
+            deg += 360;
+        }
+        var sector = (int)Math.Round(deg / 45.0) % 8;
+        return new[] { "Right", "BottomRight", "Bottom", "BottomLeft", "Left", "TopLeft", "Top", "TopRight" }[sector];
     }
 
     private static bool IsForegroundSelf()
@@ -260,6 +333,8 @@ public sealed class HostController : IDisposable
     public void Dispose()
     {
         _bridge.Input.IntentEmitted -= OnSpatialIntent;
+        _bridge.Input.InputReleased -= OnInputReleased;
+        _bridge.Input.RawInputEmitted -= OnRawInput;
         _pipeServer.Dispose();
         _webView2.Dispose();
         _ringOverlay?.Dispose();
