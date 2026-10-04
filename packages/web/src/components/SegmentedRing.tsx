@@ -32,6 +32,7 @@ interface SegmentedRingProps {
   size: number; // 外直径 px
   opacity: number; // 0.25~1，玻璃不透明度倍率
   bgColor: string; // 切缝颜色（跟随所处界面的底色）
+  darkGlass?: boolean; // v22.2：弹窗模式下环盘用不透明暗玻璃（透明玻璃会被窗口色键挖掉）
   slots: Record<string, SegSlot>;
   selected: string | null;
   onSelect?: (dir: string) => void;
@@ -54,6 +55,9 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
   const lr = (r + ri) / 2; // 标注所在的中带半径
   const bandLen = r - ri; // 环带厚度（辐条/空槽位中线长度）
   const glassAlpha = (0.14 * p.opacity).toFixed(3);
+  const glassBg = p.darkGlass
+    ? `rgba(18,20,17,${(0.94 * p.opacity).toFixed(3)})`
+    : `rgba(255,255,255,${glassAlpha})`;
   const mask = ANNULUS(ri);
   const [hover, setHover] = useState<string | null>(null);
   const lit = (dir: string): boolean => p.selected === dir || hover === dir;
@@ -61,7 +65,7 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
   return (
     <div className="ringwrap">
       <div className="ring" style={{ left: -r, top: -r, width: p.size, height: p.size }}>
-        <div className="rg rg-glass" style={{ background: `rgba(255,255,255,${glassAlpha})`, ...mask }} />
+        <div className="rg rg-glass" style={{ background: glassBg, ...mask }} />
         {p.selected !== null && (
           <div className="rg rg-active" style={{ clipPath: WEDGE[p.selected], ...mask }} />
         )}

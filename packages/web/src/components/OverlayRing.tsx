@@ -95,6 +95,7 @@ export function OverlayRing({ onClose }: { onClose: () => void }): JSX.Element {
           size={Math.min(settings.ringSizePx, Math.round(window.innerHeight * 0.72), Math.round(window.innerWidth * 0.7))}
           opacity={settings.ringOpacity}
           bgColor="#0b0c0a"
+          darkGlass
           slots={slots}
           selected={null}
           onSelect={trigger}

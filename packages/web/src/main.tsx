@@ -7,6 +7,7 @@ import { SettingsPage } from './pages/Settings/SettingsPage';
 import { OverlayRing } from './components/OverlayRing';
 import { useFlowStore } from './store/flowStore';
 import { useLang, setLang, getLang, t } from './i18n';
+import { postHost } from './hostLink';
 import './ui.css';
 
 // v20.1：暗色编辑排版主题 + 中英双语 + 右键覆盖层（单纯圆环形态）。
@@ -96,6 +97,13 @@ function App(): JSX.Element {
   const [page, setPage] = useState<PageName>('profiles');
   // v21：快捷环弹窗窗体以 #overlay 打开——自动进入覆盖层模式（只有单纯的圆环）
   const [overlay, setOverlay] = useState(() => location.hash.includes('overlay'));
+
+  // v22.2：弹窗模式下挂 body.popup——覆盖层背景全透明（窗口色键挖掉环外一切）
+  useEffect(() => {
+    if (location.hash.includes('overlay')) {
+      document.body.classList.add('popup');
+    }
+  }, []);
   const activeProfileId = useFlowStore((s: import('./store/flowStore').FlowState) => s.activeProfileId);
   const profiles = useFlowStore((s: import('./store/flowStore').FlowState) => s.profiles);
 
@@ -107,6 +115,27 @@ function App(): JSX.Element {
   useEffect(() => {
     postState({ kind: 'page.change', page, activeProfileId });
   }, [page, activeProfileId]);
+
+  // v22.2：环径上报（弹窗窗体按此调整尺寸）+ 宿主 OVERLAY_ON → 重新进入覆盖层
+  const settings = useFlowStore((s: import('./store/flowStore').FlowState) => s.settings);
+  useEffect(() => {
+    postHost('RING_SIZE', { size: settings.ringSizePx });
+  }, [settings.ringSizePx]);
+
+  useEffect(() => {
+    const h = (e: MessageEvent): void => {
+      try {
+        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        if (data?.type === 'OVERLAY_ON') {
+          setOverlay(true);
+        }
+      } catch {
+        // 非 JSON 消息忽略
+      }
+    };
+    window.addEventListener('message', h);
+    return () => window.removeEventListener('message', h);
+  }, []);
 
   const meta = pageMeta(page);
   const counter = page === 'profiles' ? String(profiles.length).padStart(2, '0') : meta.counter;
