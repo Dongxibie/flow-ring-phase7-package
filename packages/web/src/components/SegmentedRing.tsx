@@ -67,13 +67,16 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
   const mask = ANNULUS(ri);
   const [hover, setHover] = useState<string | null>(null);
   const lit = (dir: string): boolean => p.selected === dir || hover === dir || p.hovered === dir;
+  // v24：激活扇区【整块高亮】（手势指向/悬停/选中统一走这一层）——
+  // 旧实现只有文字变色与细框，用户看不出到底指向了哪个扇区
+  const fillDir = p.hovered ?? hover ?? p.selected;
 
   return (
     <div className="ringwrap">
       <div className="ring" style={{ left: -r, top: -r, width: p.size, height: p.size }}>
         <div className="rg rg-glass" style={{ background: glassBg, ...mask }} />
-        {p.selected !== null && (
-          <div className="rg rg-active" style={{ clipPath: WEDGE[p.selected], ...mask }} />
+        {fillDir !== null && (
+          <div className="rg rg-active" style={{ clipPath: WEDGE[fillDir], ...mask }} />
         )}
         {/* v22：径向竖线切 8 块——8 条边界辐条始终可见 */}
         {[-22.5, 22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5].map((deg) => {
@@ -113,6 +116,14 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
               }}
             />
           ))}
+        {/* v24：中心守卫圈——楔形从圆心起算，光标停在环心会误悬停到某个扇区；
+            这个透明圆盖住内圈，让"圆心/内圈"既不悬停也不点击（外圈扇区不受影响） */}
+        {p.onSelect !== undefined && (
+          <div
+            className="ring-center-guard"
+            style={{ left: r - ri, top: r - ri, width: ri * 2, height: ri * 2 }}
+          />
+        )}
       </div>
 
       {EIGHT_DIRECTIONS.map((dir) => {
@@ -126,7 +137,7 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
         return (
           <div
             key={dir}
-            className={'seg' + (on ? ' on' : '')}
+            className={'seg' + (on ? ' on' : '') + (fillDir !== null && !on ? ' dim' : '')}
             style={{ left: x, top: y }}
           >
             {on && (

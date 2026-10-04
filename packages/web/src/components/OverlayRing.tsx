@@ -31,8 +31,10 @@ export function OverlayRing({ epoch, onClose }: { epoch?: number; onClose: () =>
   const bridge = useBridge();
   const [slots, setSlots] = useState<Record<string, SegSlot>>({});
   const [flash, setFlash] = useState<string>('');
-  // v23：手势模式——按住时宿主回传光标偏移，据此高亮方向；松开回传 RELEASE_SELECT 执行
+  // v23：手势模式——按住时宿主回传光标相对【环心】的偏移，据此高亮方向；松开回传 RELEASE_SELECT 执行
   const [gestureDir, setGestureDir] = useState<string | null>(null);
+  // v24：驻留模式悬停方向（与手势指向共用环心读数）
+  const [hoverDir, setHoverDir] = useState<string | null>(null);
 
   // v23.1：宿主消息只订阅一次——最新 slots / onClose / requestClose 经 ref 读取，避免闭包过期
   const slotsRef = useRef(slots);
@@ -88,6 +90,12 @@ export function OverlayRing({ epoch, onClose }: { epoch?: number; onClose: () =>
     requestCloseRef.current = requestClose;
   }, [requestClose]);
 
+  // v24：宿主主动收起（ESC / 点击环外）时只需重置页面状态，不必再回发 OVERLAY_DONE
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     const h = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -107,6 +115,12 @@ export function OverlayRing({ epoch, onClose }: { epoch?: number; onClose: () =>
       if (data.type === 'FOLLOW' && typeof data.dx === 'number' && typeof data.dy === 'number') {
         const deadZone = useFlowStore.getState().settings.deadZoneRadiusPx;
         setGestureDir(inferDirection(data.dx, data.dy, deadZone));
+      } else if (data.type === 'OVERLAY_CLOSE') {
+        // v24：宿主侧已收起（ESC / 点击环外）——重置页面状态即可
+        setGestureDir(null);
+        setHoverDir(null);
+        setFlash('');
+        onCloseRef.current();
       } else if (data.type === 'RELEASE_SELECT') {
         const dir = typeof data.dir === 'string' ? data.dir : null;
         const slot = dir ? slotsRef.current[dir] : undefined;
@@ -145,6 +159,13 @@ export function OverlayRing({ epoch, onClose }: { epoch?: number; onClose: () =>
     ? settings.ringSizePx
     : Math.min(settings.ringSizePx, Math.round(window.innerHeight * 0.72), Math.round(window.innerWidth * 0.7));
 
+  // v24：环心读数——当前指向的扇区（手势优先，其次悬停），一眼看清松开后会执行什么
+  const activeDir = gestureDir ?? hoverDir;
+  const activeSlot = activeDir !== null ? slots[activeDir] : undefined;
+  const activeRef = activeSlot?.kind === 'action' ? activeSlot.actionRef : undefined;
+  const activeName = activeDir !== null ? (activeRef ? actionName(activeRef, lang) : t('空槽位', 'Empty')) : '';
+  const activeKey = activeRef ? actionKey(activeRef) : '';
+
   return (
     <div
       className="overlay"
@@ -164,11 +185,19 @@ export function OverlayRing({ epoch, onClose }: { epoch?: number; onClose: () =>
           selected={null}
           hovered={gestureDir}
           onSelect={trigger}
+          onHover={(d) => setHoverDir(d)}
           nameOf={(r) => actionName(r, lang)}
           keyOf={actionKey}
           emptyLabel={t('空槽位', 'Empty')}
           childLabel={(id) => (lang === 'zh' ? `子环 · ${id ?? '?'}` : `Sub-ring · ${id ?? '?'}`)}
+          core={activeDir === null}
         />
+        {activeDir !== null && (
+          <div className="ring-readout">
+            <div className="nm">{activeName}</div>
+            {activeKey !== '' && <div className="ky">{activeKey}</div>}
+          </div>
+        )}
       </div>
       <p className="hint">
         {flash !== ''
