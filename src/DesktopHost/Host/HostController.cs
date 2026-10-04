@@ -28,14 +28,17 @@ public sealed class HostController : IDisposable
     private readonly WebView2Host _webView2;
     private readonly BridgeServer _pipeServer;
     private readonly ActionDispatcher _actions;
+    private readonly FullscreenDetector _fullscreen = new();
     private RingOverlayForm? _ringOverlay;
     private int _ringSizePx = 500; // 环径，前端 RING_SIZE 消息实时更新
+    private int _deadZonePx = 56;  // v24：释放死区半径（px），前端 DEAD_ZONE 消息实时更新
     // v23：跟随/释放状态（按住=手势模式：环追光标，松开执行方向）
     private bool _ringHolding;
     private long _lastFollowMs;
-    private (int Dx, int Dy)? _lastOffset;
+    private RingPoint? _pressOrigin; // v24：本次按下的起点（方向判定与相对偏移的原点）
     private volatile bool _isPaused;
     private volatile bool _isActive;
+    private bool _disposed;
 
     public HostController(
         ILoggerFactory? loggerFactory = null,
@@ -84,6 +87,13 @@ public sealed class HostController : IDisposable
     public void SetPaused(bool paused)
     {
         _isPaused = paused;
+        _bridge.Input.IsSuspended = paused; // 真暂停：输入适配器完全放行触发键
+        if (paused)
+        {
+            // 暂停时收起快捷环，避免覆盖层继续响应
+            _ringHolding = false;
+            HideRingOverlay();
+        }
         _logger.LogInformation("Paused 状态切换：{State}", paused ? "已暂停" : "运行中");
         _tray.UpdateIcon();
     }
@@ -91,6 +101,11 @@ public sealed class HostController : IDisposable
     /// <summary>v21：前端/弹窗触发的动作真执行入口。v22：支持自定义动作参数（app-launch 的目标）。</summary>
     public async Task ExecuteActionAsync(string code, string? arg = null)
     {
+        if (IsPaused)
+        {
+            _logger.LogInformation("已暂停，忽略动作");
+            return;
+        }
         _logger.LogInformation("执行动作：{Code}（arg={Arg}）", code, arg ?? "-");
         try
         {
@@ -179,6 +194,17 @@ public sealed class HostController : IDisposable
         }
     }
 
+    /// <summary>v24：前端上报释放死区半径（clamp 到 10..120px）。</summary>
+    public void SetDeadZone(int px)
+    {
+        var clamped = Math.Clamp(px, 10, 120);
+        if (clamped != _deadZonePx)
+        {
+            _deadZonePx = clamped;
+            _logger.LogInformation("死区半径更新：{Px}px", clamped);
+        }
+    }
+
     private void OnUiReady(object? sender, EventArgs e)
     {
         // 在 UI 线程（线程 1 STA）创建并预加载弹窗——避免 RPC_E_CHANGED_MODE 线程模式冲突
@@ -192,7 +218,7 @@ public sealed class HostController : IDisposable
         {
             return;
         }
-        _ringOverlay = new RingOverlayForm(this, _loggerFactory, _webView2.FrontendDist);
+        _ringOverlay = new RingOverlayForm(this, _loggerFactory, _webView2.FrontendDist, _webView2.Environment);
         _logger.LogInformation("快捷环弹窗已创建（隐藏预加载）");
     }
 
@@ -210,6 +236,15 @@ public sealed class HostController : IDisposable
 
     private void OnSpatialIntent(object? sender, SpatialIntentEvent e)
     {
+        if (IsPaused)
+        {
+            return;
+        }
+        // 全屏保护（双保险：输入适配器内已有一层）
+        if (_fullscreen.IsFullscreenForeground())
+        {
+            return;
+        }
         // v22：侧键/中键/右键长按全部唤起；但在 Flow Ring 自己前台时不弹
         //（应用内右键有自己的覆盖层，避免叠加）
         if (e.TriggerType == TriggerType.None || IsForegroundSelf())
@@ -219,12 +254,12 @@ public sealed class HostController : IDisposable
         var origin = e.OriginPoint ?? new RingPoint(0, 0);
         _logger.LogInformation("快捷环触发（{Trigger}）：({X},{Y})",
             e.TriggerType, origin.X, origin.Y);
+        _pressOrigin = e.OriginPoint; // v24：记录按下点（方向判定/相对偏移的原点）
         _ringHolding = true; // v23：进入手势模式（环追光标，松开执行方向）
-        _lastOffset = null;
         _ringOverlay?.ShowRing(_ringSizePx);
     }
 
-    // v23：按住期间环以 lerp 追光标，并把光标相对环心的偏移回给前端做扇区高亮
+    // v23：按住期间环以 lerp 追光标，并把光标相对按下点的偏移回给前端做扇区高亮
     private void OnRawInput(object? sender, RawInputEvent e)
     {
         if (!_ringHolding)
@@ -237,8 +272,10 @@ public sealed class HostController : IDisposable
             return; // ~80Hz 节流
         }
         _lastFollowMs = now;
-        var (dx, dy) = _ringOverlay?.FollowCursor(e.RawX, e.RawY) ?? (0, 0);
-        _lastOffset = (dx, dy);
+        _ringOverlay?.FollowCursor(e.RawX, e.RawY); // 先让环追上光标（移动窗口）
+        var origin = _pressOrigin ?? new RingPoint(e.RawX, e.RawY);
+        var dx = e.RawX - (int)origin.X;
+        var dy = e.RawY - (int)origin.Y;
         _ringOverlay?.PostToPage(
             "{\"type\":\"FOLLOW\",\"dx\":" + dx + ",\"dy\":" + dy + "}");
     }
@@ -259,34 +296,27 @@ public sealed class HostController : IDisposable
             return;
         }
 
-        var offset = _lastOffset ?? (0, 0);
-        var dist = Math.Sqrt(offset.Dx * offset.Dx + offset.Dy * offset.Dy);
-        var dir = dist < 56 ? null : InferDirection(offset.Dx, offset.Dy);
-        if (dir is null)
+        // v24：以按下点为原点做死区/方向判定（释放点相对按下点）
+        var origin = _pressOrigin ?? new RingPoint(e.ReleaseX, e.ReleaseY);
+        var decision = ReleaseDecider.Decide(
+            origin, new RingPoint(e.ReleaseX, e.ReleaseY), true, _deadZonePx);
+
+        if (decision.Outcome == ReleaseOutcome.Cancel)
         {
             _logger.LogInformation("死区释放：取消快捷环");
             _ringOverlay?.HideRing();
             return;
         }
-        _logger.LogInformation("长按释放，方向：{Dir}", dir);
-        _ringOverlay?.PostToPage(
-            "{\"type\":\"RELEASE_SELECT\",\"dir\":\"" + dir + "\"}");
-    }
 
-    /// <summary>与前端 inferDirection 同款的 8 向判定（0°=右，顺时针）。</summary>
-    private static string? InferDirection(int dx, int dy)
-    {
-        if (Math.Sqrt(dx * dx + dy * dy) < 16)
+        if (decision.Outcome == ReleaseOutcome.Execute)
         {
-            return null;
+            var dir = decision.Direction.ToString();
+            var dx = e.ReleaseX - (int)origin.X;
+            var dy = e.ReleaseY - (int)origin.Y;
+            _logger.LogInformation("长按释放，方向：{Dir}（位移 {Dx},{Dy}）", dir, dx, dy);
+            _ringOverlay?.PostToPage(
+                "{\"type\":\"RELEASE_SELECT\",\"dir\":\"" + dir + "\"}");
         }
-        var deg = Math.Atan2(dy, dx) * 180 / Math.PI;
-        if (deg < 0)
-        {
-            deg += 360;
-        }
-        var sector = (int)Math.Round(deg / 45.0) % 8;
-        return new[] { "Right", "BottomRight", "Bottom", "BottomLeft", "Left", "TopLeft", "Top", "TopRight" }[sector];
     }
 
     private static bool IsForegroundSelf()
@@ -332,6 +362,12 @@ public sealed class HostController : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
         _bridge.Input.IntentEmitted -= OnSpatialIntent;
         _bridge.Input.InputReleased -= OnInputReleased;
         _bridge.Input.RawInputEmitted -= OnRawInput;

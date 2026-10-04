@@ -215,6 +215,21 @@ public sealed class MainWindow : Form
                 _controller.DebugShowRing();
                 return;
             }
+            if (type == "RING_SIZE")
+            {
+                var size = root.TryGetProperty("size", out var sz) && sz.TryGetInt32(out var sizeValue) ? sizeValue : 0;
+                _controller.SetRingSize(size);
+                return;
+            }
+            if (type == "DEAD_ZONE")
+            {
+                // 仅当 radius 是可解析的整数才更新（缺失字段不应把死区意外改成下限）
+                if (root.TryGetProperty("radius", out var r) && r.TryGetInt32(out var rv))
+                {
+                    _controller.SetDeadZone(rv);
+                }
+                return;
+            }
 
             var state = root.TryGetProperty("state", out var s) ? s.ToString() : "(no state)";
             _logger.LogInformation("MainWindow WebMessageReceived [Type={Type}] [State={State}]", type, state);
@@ -234,11 +249,11 @@ public sealed class MainWindow : Form
         _logger.LogInformation("MainWindow WebMessageReceived 监听已注册");
     }
 
-    public async Task InitializeAsync(string frontendDistPath, CancellationToken ct)
+    public async Task InitializeAsync(CoreWebView2Environment? environment, string frontendDistPath, CancellationToken ct)
     {
         try
         {
-            await _webView.EnsureCoreWebView2Async(null);
+            await _webView.EnsureCoreWebView2Async(environment);
         }
         catch (Exception ex)
         {

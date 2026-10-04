@@ -23,6 +23,7 @@ public sealed class BridgeServer : IDisposable
     private readonly ILogger<BridgeServer> _logger;
     private readonly CancellationTokenSource _cts = new();
     private Task? _acceptLoop;
+    private bool _disposed;
 
     public static string PipeName => $"FlowRing.{Environment.ProcessId}";
 
@@ -89,6 +90,12 @@ public sealed class BridgeServer : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
         _cts.Cancel();
         _cts.Dispose();
         try

@@ -22,14 +22,20 @@ public sealed class RingOverlayForm : Form
 
     private readonly HostController _controller;
     private readonly string _frontendDist;
+    private readonly CoreWebView2Environment? _environment;
     private readonly ILogger<RingOverlayForm> _logger;
     private readonly WebView2 _webView = new();
     private bool _contentReady;
 
-    public RingOverlayForm(HostController controller, ILoggerFactory? loggerFactory = null, string? frontendDist = null)
+    public RingOverlayForm(
+        HostController controller,
+        ILoggerFactory? loggerFactory = null,
+        string? frontendDist = null,
+        CoreWebView2Environment? environment = null)
     {
         _controller = controller;
         _frontendDist = frontendDist ?? string.Empty;
+        _environment = environment;
         _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RingOverlayForm>();
 
         Text = "Flow Ring — 快捷环";
@@ -83,7 +89,7 @@ public sealed class RingOverlayForm : Form
         _ = Handle; // 强制创建句柄，后续 BeginInvoke 才可用
         try
         {
-            await _webView.EnsureCoreWebView2Async(null);
+            await _webView.EnsureCoreWebView2Async(_environment);
         }
         catch (Exception ex)
         {
@@ -203,6 +209,13 @@ public sealed class RingOverlayForm : Form
                     if (size > 0)
                     {
                         _controller.SetRingSize(size);
+                    }
+                    break;
+                case "DEAD_ZONE":
+                    // v24：与主窗一致——仅当 radius 是可解析的整数才更新（缺失字段不改动）
+                    if (doc.RootElement.TryGetProperty("radius", out var r) && r.TryGetInt32(out var rv))
+                    {
+                        _controller.SetDeadZone(rv);
                     }
                     break;
             }
