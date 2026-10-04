@@ -29,6 +29,7 @@ public sealed class HostController : IDisposable
     private readonly BridgeServer _pipeServer;
     private readonly ActionDispatcher _actions;
     private RingOverlayForm? _ringOverlay;
+    private int _ringSizePx = 500; // 环径，前端 RING_SIZE 消息实时更新
     private volatile bool _isPaused;
     private volatile bool _isActive;
 
@@ -150,10 +151,26 @@ public sealed class HostController : IDisposable
         _logger.LogInformation("已打开前端主界面");
     }
 
+    /// <summary>v22.2：调试通道——强制显示快捷环（验证透明渲染）。</summary>
+    public void DebugShowRing()
+    {
+        _ringOverlay?.ShowRing(_ringSizePx);
+    }
+
     /// <summary>v21：隐藏快捷环弹窗（OVERLAY_DONE / Deactivate 时调用）。</summary>
     public void HideRingOverlay()
     {
         _ringOverlay?.HideRing();
+    }
+
+    /// <summary>v22.2：前端上报环径（设置页滑杆/弹窗共用）。</summary>
+    public void SetRingSize(int sizePx)
+    {
+        if (sizePx > 0 && sizePx != _ringSizePx)
+        {
+            _ringSizePx = sizePx;
+            _logger.LogInformation("环径更新：{Size}px", sizePx);
+        }
     }
 
     private void OnUiReady(object? sender, EventArgs e)
@@ -196,7 +213,7 @@ public sealed class HostController : IDisposable
         var origin = e.OriginPoint ?? new RingPoint(0, 0);
         _logger.LogInformation("快捷环触发（{Trigger}）：({X},{Y})",
             e.TriggerType, origin.X, origin.Y);
-        _ringOverlay?.ShowRing();
+        _ringOverlay?.ShowRing(_ringSizePx);
     }
 
     private static bool IsForegroundSelf()

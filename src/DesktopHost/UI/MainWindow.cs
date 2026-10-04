@@ -209,6 +209,12 @@ public sealed class MainWindow : Form
                 _controller.HideRingOverlay();
                 return;
             }
+            if (type == "DEBUG_SHOW_RING")
+            {
+                // 调试通道：无输入注入环境下的显示验证
+                _controller.DebugShowRing();
+                return;
+            }
 
             var state = root.TryGetProperty("state", out var s) ? s.ToString() : "(no state)";
             _logger.LogInformation("MainWindow WebMessageReceived [Type={Type}] [State={State}]", type, state);

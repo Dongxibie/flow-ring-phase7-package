@@ -7,22 +7,24 @@ using Microsoft.Web.WebView2.WinForms;
 namespace FlowRing.DesktopHost.UI;
 
 /// <summary>
-/// v21：快捷环弹窗窗体——侧键长按唤起的运行时形态。
-/// 无边框、置顶、不进任务栏、圆角；内嵌 WebView2 打开 index.html#overlay
-/// （前端据此自动进入覆盖层模式：只有单纯的圆环，功能标注在扇区里）。
-/// 生命周期：宿主启动时隐藏预加载；侧键 Intent → ShowRing()；触发/ESC → 前端
-/// 回发 OVERLAY_DONE → HideRing()；点击窗外（Deactivate）→ HideRing()。
+/// v22.2：快捷环弹窗——"只有环本体"的透明浮层。
+/// WebView2 背景透明 + 窗体色键（TransparencyKey）挖掉环以外的一切：
+/// 看得穿、点得穿，视野里只有圆环本身（修复"很大一坨方块占视野"）。
+/// 位置跟随光标（环中心=光标，夹在屏幕工作区内）；尺寸随设置实时变化。
+/// 每次显示前回发 OVERLAY_ON，前端重新进入覆盖层模式（修复"只有一次是圆环"）。
 /// </summary>
 public sealed class RingOverlayForm : Form
 {
-    private const int GripRadius = 28;
-
     private const string VirtualHost = "flowring.local";
+
+    /// <summary>色键：环以外像素的挖除色（不会与任何 UI 颜色撞车）。</summary>
+    private static readonly Color Chroma = Color.FromArgb(255, 1, 2, 3);
 
     private readonly HostController _controller;
     private readonly string _frontendDist;
     private readonly ILogger<RingOverlayForm> _logger;
     private readonly WebView2 _webView = new();
+    private bool _contentReady;
 
     public RingOverlayForm(HostController controller, ILoggerFactory? loggerFactory = null, string? frontendDist = null)
     {
@@ -35,12 +37,13 @@ public sealed class RingOverlayForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        Size = new Size(720, 720);
-        BackColor = Color.FromArgb(11, 12, 10);
-        SetRoundRegion();
+        Size = new Size(580, 580);
+        BackColor = Chroma;
+        TransparencyKey = Chroma;
 
+        // v22.2：WebView2 背景透明——网页里环以外的部分直接透出桌面
+        _webView.DefaultBackgroundColor = Color.Transparent;
         _webView.Dock = DockStyle.Fill;
-        _webView.DefaultBackgroundColor = Color.FromArgb(11, 12, 10);
         Controls.Add(_webView);
 
         _webView.CoreWebView2InitializationCompleted += (_, e) =>
@@ -52,8 +55,7 @@ public sealed class RingOverlayForm : Form
             }
             _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-            // v22.1 修复：弹窗是独立的 CoreWebView2 实例，虚拟主机映射必须自己配一份，
-            // 否则 flowring.local 无法解析 → "无法访问此页面"
+            // v22.1：弹窗是独立的 CoreWebView2 实例，虚拟主机映射必须自己配一份
             if (!string.IsNullOrEmpty(_frontendDist))
             {
                 _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
@@ -61,6 +63,7 @@ public sealed class RingOverlayForm : Form
             }
             _webView.CoreWebView2.WebMessageReceived += OnWebMessage;
             _webView.CoreWebView2.Navigate($"https://{VirtualHost}/index.html#overlay");
+            _contentReady = true;
             _logger.LogInformation("快捷环 WebView2 已就绪并导航到 #overlay（dist={Dist}）", _frontendDist);
         };
 
@@ -88,23 +91,35 @@ public sealed class RingOverlayForm : Form
         }
     }
 
-    /// <summary>在光标所在屏幕居中显示（可在任意线程调用，内部 marshal 到 UI 线程）。</summary>
-    public void ShowRing()
+    /// <summary>在光标处显示环（环中心=光标，夹在屏幕工作区内）。任意线程可调。</summary>
+    public void ShowRing(int ringSizePx)
     {
         if (InvokeRequired)
         {
-            _ = BeginInvoke(ShowRing);
+            _ = BeginInvoke(() => ShowRing(ringSizePx));
             return;
         }
 
+        var margin = 44;
+        Size = new Size(ringSizePx + margin * 2, ringSizePx + margin * 2);
+
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-        Location = new Point(
-            area.Left + ((area.Width - Width) / 2),
-            area.Top + ((area.Height - Height) / 2));
+        var x = Cursor.Position.X - Width / 2;
+        var y = Cursor.Position.Y - Height / 2;
+        x = Math.Max(area.Left, Math.Min(x, area.Right - Width));
+        y = Math.Max(area.Top, Math.Min(y, area.Bottom - Height));
+        Location = new Point(x, y);
+
         TopMost = true;
         Show();
         Activate();
-        _logger.LogInformation("快捷环弹窗已显示 @ {Screen}", area);
+
+        // v22.2：每次显示都让前端重新进入覆盖层模式（修复"只有第一次是圆环"）
+        if (_contentReady)
+        {
+            _webView.CoreWebView2?.PostWebMessageAsString("{\"type\":\"OVERLAY_ON\"}");
+        }
+        _logger.LogInformation("快捷环已显示（环径 {Size}px）@ 光标", ringSizePx);
     }
 
     public void HideRing()
@@ -115,7 +130,7 @@ public sealed class RingOverlayForm : Form
             return;
         }
         Hide();
-        _logger.LogInformation("快捷环弹窗已隐藏");
+        _logger.LogInformation("快捷环已隐藏");
     }
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -143,6 +158,13 @@ public sealed class RingOverlayForm : Form
                 case "OVERLAY_DONE":
                     HideRing();
                     break;
+                case "RING_SIZE":
+                    var size = doc.RootElement.TryGetProperty("size", out var sz) && sz.TryGetInt32(out var s) ? s : 0;
+                    if (size > 0)
+                    {
+                        _controller.SetRingSize(size);
+                    }
+                    break;
             }
         }
         catch (Exception ex)
@@ -150,17 +172,4 @@ public sealed class RingOverlayForm : Form
             _logger.LogError(ex, "快捷环 WebMessage 处理失败");
         }
     }
-
-    private void SetRoundRegion()
-    {
-        var path = new System.Drawing.Drawing2D.GraphicsPath();
-        path.AddArc(0, 0, GripRadius, GripRadius, 180, 90);
-        path.AddArc(Width - GripRadius - 1, 0, GripRadius, GripRadius, 270, 90);
-        path.AddArc(Width - GripRadius - 1, Height - GripRadius - 1, GripRadius, GripRadius, 0, 90);
-        path.AddArc(0, Height - GripRadius - 1, GripRadius, GripRadius, 90, 90);
-        path.CloseFigure();
-        Region?.Dispose();
-        Region = new Region(path);
-    }
-
 }

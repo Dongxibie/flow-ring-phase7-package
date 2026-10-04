@@ -185,9 +185,20 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
             return;
         }
 
-        if (!_holdFired)
+        // v22.2：侧键快速点按也算触发——此前必须长按 150ms，用户点按没反应
+        if (!_holdFired && _pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2)
         {
-            // 按下后立即松开，不视为长按触发
+            var triggerType = MapButtonToTrigger(_pressedButtonVk);
+            if (triggerType != TriggerType.None)
+            {
+                var evt = new SpatialIntentEvent(
+                    triggerType,
+                    new RingPoint(_pressPoint.X, _pressPoint.Y),
+                    1.0f,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    ModifierState.None);
+                _events.EmitIntent(evt);
+            }
         }
 
         _pressedButtonVk = 0;
