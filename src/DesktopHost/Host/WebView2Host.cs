@@ -197,16 +197,25 @@ public sealed class WebView2Host : IDisposable
         }
     }
 
+    /// <summary>
+    /// v25：发行包优先——先查 exe 同级的 packages/web/dist（zip 解压即用的布局），
+    /// 再查当前工作目录，最后保留开发目录向上 5 级的兜底；命中即返回。
+    /// </summary>
     private static string ResolveFrontendDistPath()
     {
+        // ① 发行包布局：exe 所在目录下的 packages\web\dist
+        var byBase = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "packages", "web", "dist"));
+        if (Directory.Exists(byBase)) return byBase;
+
+        // ② 运行工作目录布局：当前工作目录下的 packages\web\dist
         var cwd = Directory.GetCurrentDirectory();
         var byCwd = Path.GetFullPath(Path.Combine(cwd, "packages", "web", "dist"));
         if (Directory.Exists(byCwd)) return byCwd;
 
-        var baseDir = AppContext.BaseDirectory;
-        var byBase = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "..",
+        // ③ 开发目录兜底：从 base 目录向上 5 级回到仓库根（bin/Debug/net8.0-windows → 仓库根）
+        var byDevTree = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
             "packages", "web", "dist"));
-        return byBase;
+        return byDevTree;
     }
 
     private static bool IsMissingRuntime(Exception ex)
