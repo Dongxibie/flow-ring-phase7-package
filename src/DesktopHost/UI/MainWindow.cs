@@ -61,7 +61,15 @@ public sealed class MainWindow : Form
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         FormBorderStyle = FormBorderStyle.Sizable;
-        Icon = null;
+        // v25：窗口/任务栏图标 = exe 内嵌的 Flow Ring 标（csproj ApplicationIcon）
+        try
+        {
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        }
+        catch
+        {
+            Icon = null;
+        }
 
         _webView.Dock = DockStyle.Fill;
         Controls.Add(_webView);

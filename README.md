@@ -1,3 +1,5 @@
+<img src="docs/assets/logo.png" alt="Flow Ring" width="120" />
+
 # Flow Ring
 
 按住鼠标侧键唤出一个圆环，把光标拖向某个方向后松开，就能执行常用动作——不用离开当前窗口去翻菜单。
@@ -25,7 +27,7 @@ Flow Ring 是一个 Windows 桌面快捷环：环形菜单悬浮在任意应用�
   任意方向槽位都能换成自定义动作：既可以是键盘快捷键（如 `Ctrl+Alt+T`），也可以是启动程序或打开网址（填写 exe 路径或 URL），随档案保存。
 
 - **数据本地化**
-  配置与档案写入 `%APPDATA%\FlowRing`，WebView2 运行数据写入 `%LOCALAPPDATA%\FlowRing\WebView2`；应用自身不发起任何网络请求。卸载 = 删除程序文件夹与上述目录。
+  全部数据（档案 / 槽位 / 自定义动作 / 设置）保存在本地 `%LOCALAPPDATA%\FlowRing\WebView2`；应用自身不发起任何网络请求。卸载 = 删除程序文件夹与上述目录。
 
 ## 截图
 

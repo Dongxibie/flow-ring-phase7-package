@@ -182,6 +182,11 @@ function App(): JSX.Element {
       </section>
 
       <nav className="nav">
+        {/* v25：左下角小标——Flow Ring 标形（细线环 + 橄榄弧光），与图标同源 */}
+        <svg className="navmark" viewBox="0 0 64 64" aria-hidden="true">
+          <circle cx="32" cy="32" r="19" fill="none" stroke="rgba(255,255,255,.42)" strokeWidth="2.4" />
+          <path d="M 24.9 14.4 A 19 19 0 0 1 51 33.3" fill="none" stroke="#DBDDA1" strokeWidth="3.4" strokeLinecap="round" />
+        </svg>
         {([
           ['profiles', t('档案', 'Profiles')],
           ['studio', t('环工作室', 'Ring Studio')],

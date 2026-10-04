@@ -5,6 +5,7 @@
     <RootNamespace>FlowRing.DesktopHost</RootNamespace>
     <AssemblyName>FlowRing.DesktopHost</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\flowring.ico</ApplicationIcon>
     <Description>DesktopHost: 进程入口 + 系统托盘 + WebView2 宿主 + IPC。</Description>
   </PropertyGroup>
   <ItemGroup>

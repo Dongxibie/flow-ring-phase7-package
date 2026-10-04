@@ -66,25 +66,42 @@ public sealed class TrayIcon : IDisposable
     }
 
     /// <summary>
-    /// 状态图：16x16 圆点。
-    /// 运行中 = 绿色；暂停 = 灰色；异常 = 黄色（占位）。
+    /// 状态图标（16x16）：Flow Ring 标形——细线圆环 + 状态色弧光。
+    /// 运行中 = 绿色弧光；暂停 = 灰色；未激活 = 黄色。
+    /// HICON 生命周期：取句柄后立刻 Clone 出自有副本并 DestroyIcon——
+    /// 避免历史 bug（句柄随 Bitmap 释放而失效 / 每次刷新泄漏一个 HICON）。
     /// </summary>
     private static Icon BuildIcon(bool paused, bool active)
     {
+        var arcColor = paused
+            ? Color.FromArgb(255, 150, 150, 150)
+            : (active ? Color.FromArgb(255, 90, 200, 110) : Color.FromArgb(255, 214, 200, 74));
         using var bmp = new Bitmap(16, 16);
         using (var g = Graphics.FromImage(bmp))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
-            var color = paused ? Color.Gray : (active ? Color.FromArgb(255, 0, 180, 0) : Color.FromArgb(255, 220, 200, 0));
-            using var brush = new SolidBrush(color);
-            g.FillEllipse(brush, 1, 1, 14, 14);
-            using var pen = new Pen(Color.Black, 1f);
-            g.DrawEllipse(pen, 1, 1, 14, 14);
+            // 细线圆环
+            using var ringPen = new Pen(Color.FromArgb(190, 230, 230, 225), 1.6f);
+            g.DrawEllipse(ringPen, 2.6f, 2.6f, 10.8f, 10.8f);
+            // 状态色弧光（右上，约 116°）
+            using var arcPen = new Pen(arcColor, 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawArc(arcPen, 2.4f, 2.4f, 11.2f, 11.2f, -112f, 116f);
         }
         var hicon = bmp.GetHicon();
-        return Icon.FromHandle(hicon);
+        try
+        {
+            using var tmp = Icon.FromHandle(hicon);
+            return (Icon)tmp.Clone();
+        }
+        finally
+        {
+            DestroyIcon(hicon);
+        }
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(nint hIcon);
 
     public void Dispose()
     {

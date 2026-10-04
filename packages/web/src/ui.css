@@ -58,6 +58,8 @@ input,select,textarea{font-family:var(--mono)}
 .nav button.on{color:var(--olive);font-weight:500}
 .nav button.on::before{content:"";position:absolute;top:0;left:0;width:18px;height:18px;
   border-top:2px solid var(--olive);border-left:2px solid var(--olive)}
+/* v25：左下角小标——品牌标形（细线环 + 橄榄弧光），贴在导航左侧角落 */
+.nav .navmark{position:absolute;left:-30px;bottom:2px;width:18px;height:18px;opacity:.92}
 
 /* ── 右下计数器 ── */
 .counter{position:absolute;right:48px;bottom:36px;text-align:right;z-index:4}
