@@ -3,9 +3,14 @@ import { useState } from 'react';
 // v20.1：整环切割构件（环工作室与右键覆盖层共用）。
 // 尺寸与玻璃不透明度全部参数化（设置页滑杆实时生效）；
 // 功能标注（动作名 + 快捷键）直接放进扇区内部，随扇区旋转、下半球自动翻转保持可读。
+// 这两个常量数组/对象是模块级只读数据（仅供其他模块 import 复用），文件同时导出组件属预期用法；
+// allowConstantExport 只识别字面量初始化，对数组/对象字面量不生效，故按行放行（不关闭整条规则）。
+// eslint-disable-next-line react-refresh/only-export-components
 export const EIGHT_DIRECTIONS = ['Top', 'TopRight', 'Right', 'BottomRight', 'Bottom', 'BottomLeft', 'Left', 'TopLeft'];
 
 // 楔形多边形：以"右"扇区为基准（屏幕坐标 y 向下），45° 扇区 ±21°
+// 同上：只读常量数据，按行放行 only-export-components
+// eslint-disable-next-line react-refresh/only-export-components
 export const WEDGE: Record<string, string> = {
   Top: 'polygon(50% 50%, 32.1% 3.3%, 37.0% 1.7%, 42.2% 0.6%, 47.4% 0.1%, 52.6% 0.1%, 57.8% 0.6%, 63.0% 1.7%, 67.9% 3.3%)',
   TopRight: 'polygon(50% 50%, 70.4% 4.3%, 75.0% 6.7%, 79.4% 9.6%, 83.4% 12.9%, 87.1% 16.6%, 90.4% 20.6%, 93.3% 25.0%, 95.7% 29.6%)',

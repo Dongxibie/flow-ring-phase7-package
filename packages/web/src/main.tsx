@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- 入口文件：只做 createRoot 挂载、不导出组件，本就不是 HMR 刷新边界 */
 import { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ProfileManagerPage } from './pages/ProfileManager/ProfileManagerPage';
@@ -5,9 +6,9 @@ import { RingStudioPage } from './pages/RingStudio/RingStudioPage';
 import { FlowCodePage } from './pages/FlowCode/FlowCodePage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { OverlayRing } from './components/OverlayRing';
-import { useFlowStore } from './store/flowStore';
+import { useFlowStore, refreshRingPrefs } from './store/flowStore';
 import { useLang, setLang, getLang, t } from './i18n';
-import { postHost } from './hostLink';
+import { postHost, onHostMessage } from './hostLink';
 import './ui.css';
 
 // v20.1：暗色编辑排版主题 + 中英双语 + 右键覆盖层（单纯圆环形态）。
@@ -71,7 +72,7 @@ function postState(state: Record<string, unknown>): void {
   if (typeof window !== 'undefined' && window.chrome?.webview) {
     try {
       window.chrome.webview.postMessage(JSON.stringify({ type: 'PAGE_STATE', state }));
-    } catch (e) {
+    } catch {
       // 静默失败
     }
   }
@@ -97,6 +98,8 @@ function App(): JSX.Element {
   const [page, setPage] = useState<PageName>('profiles');
   // v21：快捷环弹窗窗体以 #overlay 打开——自动进入覆盖层模式（只有单纯的圆环）
   const [overlay, setOverlay] = useState(() => location.hash.includes('overlay'));
+  // v23.1：每次 OVERLAY_ON 递增，OverlayRing 依赖它重读槽位（弹窗指派保持新鲜）
+  const [overlayEpoch, setOverlayEpoch] = useState(0);
 
   // v22.2：弹窗模式下挂 body.popup——覆盖层背景全透明（窗口色键挖掉环外一切）
   useEffect(() => {
@@ -110,6 +113,8 @@ function App(): JSX.Element {
   useEffect(() => {
     setupErrorReporting();
     postState({ kind: 'app.mount', page, activeProfileId });
+    // app.mount 只在挂载时上报一次；此后 page / activeProfileId 的变化由下面独立的 page.change 副作用负责上报
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -122,19 +127,25 @@ function App(): JSX.Element {
     postHost('RING_SIZE', { size: settings.ringSizePx });
   }, [settings.ringSizePx]);
 
+  // v23.1：死区半径上报（与 RING_SIZE 并列；host 侧按此判定手势死区）
   useEffect(() => {
-    const h = (e: MessageEvent): void => {
-      try {
-        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (data?.type === 'OVERLAY_ON') {
-          setOverlay(true);
+    postHost('DEAD_ZONE', { radius: settings.deadZoneRadiusPx });
+  }, [settings.deadZoneRadiusPx]);
+
+  // v23.1：WebView2 的宿主消息只派发到 window.chrome.webview（原先监听 window 收不到）
+  useEffect(() => {
+    return onHostMessage((data) => {
+      if (data.type === 'OVERLAY_ON') {
+        setOverlay(true);
+        refreshRingPrefs();
+        setOverlayEpoch((e) => e + 1);
+      } else if (data.type === 'NAVIGATE') {
+        const route = data.route;
+        if (route === 'profiles' || route === 'studio' || route === 'flow-code' || route === 'settings') {
+          setPage(route); // 托盘导航由此接通
         }
-      } catch {
-        // 非 JSON 消息忽略
       }
-    };
-    window.addEventListener('message', h);
-    return () => window.removeEventListener('message', h);
+    });
   }, []);
 
   const meta = pageMeta(page);
@@ -198,7 +209,7 @@ function App(): JSX.Element {
           </main>
         )}
 
-      {overlay && <OverlayRing onClose={() => setOverlay(false)} />}
+      {overlay && <OverlayRing epoch={overlayEpoch} onClose={() => setOverlay(false)} />}
     </div>
   );
 }

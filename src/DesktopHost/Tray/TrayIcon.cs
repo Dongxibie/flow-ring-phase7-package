@@ -36,7 +36,6 @@ public sealed class TrayIcon : IDisposable
         };
         menu.Items.Add(paused);
         menu.Items.Add("设置", null, (_, _) => _controller.NavigateTo("settings"));
-        menu.Items.Add("关于", null, (_, _) => _controller.NavigateTo("about"));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => _controller.ExitApp());
 

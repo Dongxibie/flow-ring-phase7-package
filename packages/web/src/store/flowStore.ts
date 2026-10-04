@@ -34,15 +34,19 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-function loadRingPrefs(): { ringOpacity: number; ringSizePx: number } {
-  const d = { ringOpacity: 0.7, ringSizePx: 500 };
+type RingPrefs = { ringOpacity: number; ringSizePx: number; deadZoneRadiusPx: number };
+
+// v23.1：死区半径一并落 flowring.ring；旧数据没有该字段时用缺省值（向后兼容）。
+function loadRingPrefs(): RingPrefs {
+  const d: RingPrefs = { ringOpacity: 0.7, ringSizePx: 500, deadZoneRadiusPx: 56 };
   try {
     const raw = localStorage.getItem(RING_KEY);
     if (raw) {
-      const o = JSON.parse(raw) as Partial<{ ringOpacity: number; ringSizePx: number }>;
+      const o = JSON.parse(raw) as Partial<RingPrefs>;
       return {
         ringOpacity: clamp(typeof o.ringOpacity === 'number' ? o.ringOpacity : d.ringOpacity, 0.25, 1),
         ringSizePx: clamp(typeof o.ringSizePx === 'number' ? o.ringSizePx : d.ringSizePx, 320, 640),
+        deadZoneRadiusPx: clamp(typeof o.deadZoneRadiusPx === 'number' ? o.deadZoneRadiusPx : d.deadZoneRadiusPx, 10, 120),
       };
     }
   } catch {
@@ -55,7 +59,7 @@ const ringPrefs = loadRingPrefs();
 
 const defaultSettings: SettingsDraft = {
   triggerKey: 'MouseSideButton',
-  deadZoneRadiusPx: 30,
+  deadZoneRadiusPx: ringPrefs.deadZoneRadiusPx,
   animationDurationMs: 180,
   theme: 'auto',
   ringOpacity: ringPrefs.ringOpacity,
@@ -77,7 +81,11 @@ export const useFlowStore = create<FlowState>((set) => ({
       try {
         localStorage.setItem(
           RING_KEY,
-          JSON.stringify({ ringOpacity: settings.ringOpacity, ringSizePx: settings.ringSizePx }),
+          JSON.stringify({
+            ringOpacity: settings.ringOpacity,
+            ringSizePx: settings.ringSizePx,
+            deadZoneRadiusPx: settings.deadZoneRadiusPx,
+          }),
         );
       } catch {
         // 忽略
@@ -85,3 +93,9 @@ export const useFlowStore = create<FlowState>((set) => ({
       return { settings };
     }),
 }));
+
+/** v23.1：从 localStorage 重读环偏好并合并进 settings（宿主 OVERLAY_ON 后调用，弹窗每次弹出取最新值）。 */
+export function refreshRingPrefs(): void {
+  const prefs = loadRingPrefs();
+  useFlowStore.setState((state) => ({ settings: { ...state.settings, ...prefs } }));
+}

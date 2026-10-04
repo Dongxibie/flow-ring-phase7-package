@@ -122,28 +122,71 @@ public sealed class Win32SystemExecutor : IActionExecutor
         return SendKey(vk, up: false) && SendKey(vk, up: true);
     }
 
-    /// <summary>按下并释放一个 Win 组合键：Win 按下 → 各键按下/抬起 → Win 抬起。</summary>
+    /// <summary>
+    /// 按下并释放一个 Win 组合键：Win 按下 → 修饰键 keys[..^1] 依次按下 →
+    /// 主键 keys[^1] 按下/抬起 → 修饰键逆序抬起 → Win 抬起。
+    /// 任一步失败时 best-effort 释放已按下的键并返回 false。
+    /// </summary>
     private static bool WinCombo(ushort winVk, params ushort[] keys)
     {
+        if (keys.Length == 0)
+        {
+            return SendVk(winVk);
+        }
+
+        var pressed = new List<ushort>(keys.Length + 1);
         if (!SendKey(winVk, up: false))
         {
             return false;
         }
-        foreach (var k in keys)
+        pressed.Add(winVk);
+
+        // 修饰键：正序按下
+        var modifierCount = keys.Length - 1;
+        for (var i = 0; i < modifierCount; i++)
         {
-            if (!SendKey(k, up: false))
+            if (!SendKey(keys[i], up: false))
             {
-                _ = SendKey(winVk, up: true);
+                ReleaseKeys(pressed);
                 return false;
             }
-            if (!SendKey(k, up: true))
+            pressed.Add(keys[i]);
+        }
+
+        // 主键：按下后立即抬起（修饰键保持按下，组合语义才正确）
+        var mainKey = keys[^1];
+        if (!SendKey(mainKey, up: false) || !SendKey(mainKey, up: true))
+        {
+            ReleaseKeys(pressed);
+            return false;
+        }
+
+        // 修饰键：逆序抬起
+        for (var i = modifierCount - 1; i >= 0; i--)
+        {
+            if (!SendKey(keys[i], up: true))
             {
-                _ = SendKey(winVk, up: true);
+                ReleaseKeys(pressed);
                 return false;
             }
         }
-        _ = SendKey(winVk, up: true);
+
+        if (!SendKey(winVk, up: true))
+        {
+            ReleaseKeys(pressed);
+            return false;
+        }
+
         return true;
+    }
+
+    /// <summary>best-effort 逆序释放仍按下的键（重复释放无害）。</summary>
+    private static void ReleaseKeys(List<ushort> pressed)
+    {
+        for (var i = pressed.Count - 1; i >= 0; i--)
+        {
+            _ = SendKey(pressed[i], up: true);
+        }
     }
 
     private static bool SendKey(ushort vk, bool up)

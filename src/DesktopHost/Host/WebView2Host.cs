@@ -31,6 +31,9 @@ public sealed class WebView2Host : IDisposable
     /// <summary>v22.1：前端 dist 路径（快捷环弹窗的虚拟主机映射需要同一份）。</summary>
     public string FrontendDist { get; private set; } = string.Empty;
 
+    /// <summary>v24：共享的 WebView2 Environment（弹窗复用同一 user data 目录，避免多环境冲突）。</summary>
+    public CoreWebView2Environment? Environment => _environment;
+
     /// <summary>v21：MainWindow UI 线程就绪（CoreWebView2 初始化完成）后触发。</summary>
     public event EventHandler? UiReady;
 
@@ -48,11 +51,11 @@ public sealed class WebView2Host : IDisposable
         // v19 诊断：确认本方法跑在哪个线程（HostController.StartAsync 对本调用加了 ConfigureAwait(false)）
         _logger.LogInformation(
             "WebView2Host.InitializeAsync 进入（线程 {ThreadId}，apartment {Apt}）",
-            Environment.CurrentManagedThreadId,
+            System.Environment.CurrentManagedThreadId,
             Thread.CurrentThread.GetApartmentState());
 
         var webView2Dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
             "FlowRing", "WebView2");
         Directory.CreateDirectory(webView2Dir);
 
@@ -76,7 +79,7 @@ public sealed class WebView2Host : IDisposable
             // v19 诊断：CreateAsync await 之后的续体在哪个线程？
             _logger.LogInformation(
                 "CreateAsync 后续线程 {ThreadId}，apartment {Apt}",
-                Environment.CurrentManagedThreadId,
+                System.Environment.CurrentManagedThreadId,
                 Thread.CurrentThread.GetApartmentState());
         }
         catch (Exception ex) when (IsMissingRuntime(ex))
@@ -85,6 +88,9 @@ public sealed class WebView2Host : IDisposable
             _controller.SetPaused(true);
             return;
         }
+
+        // v24：CreateAsync 成功后、控件初始化之前，迁移旧默认环境的用户数据
+        MigrateLegacyUserData(webView2Dir);
 
         // 解析前端 dist 路径
         var frontendDistPath = ResolveFrontendDistPath();
@@ -97,7 +103,7 @@ public sealed class WebView2Host : IDisposable
         _mainWindow.UiReady += (_, _) => UiReady?.Invoke(this, EventArgs.Empty);
         try
         {
-            await _mainWindow.InitializeAsync(frontendDistPath, ct);
+            await _mainWindow.InitializeAsync(_environment, frontendDistPath, ct);
         }
         catch (Exception ex)
         {
@@ -132,7 +138,7 @@ public sealed class WebView2Host : IDisposable
     private static string? ResolveWebView2RuntimeFolder()
     {
         const string AppSubpath = @"Microsoft\EdgeWebView\Application";
-        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var programFilesX86 = System.Environment.GetFolderPath(System.Environment.SpecialFolder.ProgramFilesX86);
         var appRoot = Path.Combine(programFilesX86, AppSubpath);
 
         var version = TryReadVersionFromRegistry();
@@ -210,6 +216,63 @@ public sealed class WebView2Host : IDisposable
             || msg.Contains("could not be loaded", StringComparison.OrdinalIgnoreCase)
             || msg.Contains("missing", StringComparison.OrdinalIgnoreCase)
             || (ex.GetType().FullName ?? "").Contains("WebView2RuntimeNotFound", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// v24：把旧默认环境数据（exe 目录下 "FlowRing.DesktopHost.exe.WebView2\EBWebView"）
+    /// 迁移到新的 user data 目录（LocalAppData\FlowRing\WebView2\EBWebView）。
+    /// 仅当源存在且目标不存在时执行；先复制到 "EBWebView.migrating" 再 Move 成 EBWebView；
+    /// 任何失败只记 Warning，不影响启动；旧目录保留不删。
+    /// </summary>
+    private void MigrateLegacyUserData(string webView2Dir)
+    {
+        var source = Path.Combine(AppContext.BaseDirectory, "FlowRing.DesktopHost.exe.WebView2", "EBWebView");
+        var target = Path.Combine(webView2Dir, "EBWebView");
+        var temp = Path.Combine(webView2Dir, "EBWebView.migrating");
+
+        if (!Directory.Exists(source) || Directory.Exists(target))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, recursive: true); // 上次迁移失败的残留
+            }
+            CopyDirectory(source, temp);
+            Directory.Move(temp, target);
+            _logger.LogInformation("旧 WebView2 用户数据已迁移：{Source} → {Target}", source, target);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "旧 WebView2 用户数据迁移失败（忽略，不影响启动）");
+            try
+            {
+                if (Directory.Exists(temp))
+                {
+                    Directory.Delete(temp, recursive: true);
+                }
+            }
+            catch
+            {
+                // 清理失败同样不影响启动
+            }
+        }
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: true);
+        }
+        foreach (var dir in Directory.EnumerateDirectories(source))
+        {
+            CopyDirectory(dir, Path.Combine(destination, Path.GetFileName(dir)));
+        }
     }
 
     public void Dispose()

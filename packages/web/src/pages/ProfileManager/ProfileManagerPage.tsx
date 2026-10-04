@@ -8,7 +8,7 @@ import {
   saveActiveProfileId,
   newProfileId,
 } from '../../profileStore';
-import { removeSlots } from '../../slotStore';
+import { loadSlots, saveSlots, removeSlots } from '../../slotStore';
 
 // v22：档案管理真实现——新建/重命名/复制/删除/设为当前全部落 localStorage，
 // 每个档案对应一套独立的环指派（slotStore 按档案 id 分键）。
@@ -30,7 +30,7 @@ export function ProfileManagerPage(): JSX.Element {
     setProfiles(local);
     const active = loadActiveProfileId();
     setActiveProfile(local.some((p) => p.id === active) ? active : local[0].id);
-  }, []);
+  }, [setProfiles, setActiveProfile]);
 
   const persist = (list: ProfileSummary[]): void => {
     setProfiles(list);
@@ -65,6 +65,9 @@ export function ProfileManagerPage(): JSX.Element {
 
   const copyProfile = (p: ProfileSummary): void => {
     const id = newProfileId();
+    // v23.1：复制档案时深拷贝槽位（loadSlots 逐方向重建，避免引用共享）
+    const src = loadSlots(p.id);
+    saveSlots(src, id);
     persist([...profiles, { id, name: `${p.name}·${t('副本', 'copy')}`, isDefault: false }]);
   };
 

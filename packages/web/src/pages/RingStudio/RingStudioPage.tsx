@@ -63,8 +63,8 @@ export function RingStudioPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-    // v19 白屏修复口诀：依赖收敛到稳定方法引用
-  }, [bridge.loadStudio, profileId]);
+    // v19 白屏修复口诀：依赖收敛到稳定方法引用；bridge 由 useBridge 的 useMemo 保证稳定
+  }, [bridge, profileId]);
 
   // v21：指派即持久化（覆盖层 / 右键唤起读同一份）
   useEffect(() => {

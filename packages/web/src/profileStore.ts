@@ -49,5 +49,6 @@ export function saveActiveProfileId(id: string): void {
 }
 
 export function newProfileId(): string {
-  return 'p-' + Date.now().toString(36);
+  // v23.1：加随机后缀，避免同毫秒内新建/复制撞 id
+  return 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 }

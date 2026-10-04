@@ -28,6 +28,9 @@ public interface IInputAdapter : IAsyncDisposable
     /// <summary>v23：触发键释放（长按释放=执行方向；快速点按=驻留菜单）。</summary>
     event EventHandler<InputReleasedEvent>? InputReleased;
 
+    /// <summary>暂停/全屏保护：为 true 时触发键完全放行（不吞键、不发意图）。</summary>
+    bool IsSuspended { get; set; }
+
     Task InstallAsync(CancellationToken ct);
     Task UninstallAsync(CancellationToken ct);
 }
