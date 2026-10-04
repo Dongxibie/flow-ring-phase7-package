@@ -138,53 +138,37 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
   width:14px;height:14px;border-radius:50%;background:var(--olive);border:none;cursor:pointer}
 
 /* ── 整环切割（环工作室 + 右键覆盖层共用构件） ── */
-.ringwrap{position:absolute;left:54%;top:54%;width:0;height:0}
+.ringwrap{position:absolute;left:54%;top:54%;width:0;height:0;opacity:var(--ring-op,1)} /* v25 修复：整环不透明度（组件经 --ring-op 传入，设置页滑杆生效） */
 .ring{position:absolute}
-.rg{position:absolute;inset:0;border-radius:50%}
-.rg-glass{backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  box-shadow:0 14px 34px rgba(0,0,0,.35)}
-.rg-active{background:rgba(219,221,161,.24)}
-.rg-rim{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.16);pointer-events:none}
-.rg-rim-in{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.12);pointer-events:none}
+/* v25（方案 C · 极简线框 HUD）：外圈/内圈/分界刻度走第一层 SVG，弧光+指针走第二层
+   （几何见 SegmentedRing.tsx，stroke-width 已按 px 换算） */
+.ring-lines,.ring-glow{position:absolute;inset:0;width:100%;height:100%;
+  overflow:visible;pointer-events:none}
+.ring-glow{filter:drop-shadow(0 0 12px rgba(219,221,161,.55))} /* 橄榄弧光发光（demo C：shadowBlur 14） */
 .wedge{position:absolute;inset:0;cursor:pointer}
 /* v24：中心守卫圈——挡住内圈的误悬停/误点击（透明，不挡视觉） */
 .ring-center-guard{position:absolute;border-radius:50%;background:transparent;pointer-events:auto}
-.spoke{position:absolute;width:2px;border-radius:1px;background:rgba(255,255,255,.32);pointer-events:none}
-.spoke.mid{background:rgba(255,255,255,.13);width:1px}
-.core{position:absolute;left:-28px;top:-28px;width:56px;height:56px;border-radius:50%;
-  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-  display:flex;align-items:center;justify-content:center;
-  box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none}
-.core i{width:10px;height:10px;border-radius:50%;background:var(--olive)}
+/* v25：中央细环——去掉原来的玻璃底与橄榄圆点，直径由组件按环半径算（约 R*0.667） */
+.core{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;
+  border:1px solid rgba(255,255,255,.16);pointer-events:none}
 
-/* 扇区内标注（随扇区旋转，下半球自动翻转） */
+/* 扇区内标注（随扇区旋转，下半球自动翻转）；v25 起无底色，靠 text-shadow 保证亮背景上也读得清 */
 .seg{position:absolute;display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none}
-.seg .snm{font-weight:500;font-size:13px;letter-spacing:-.2px;white-space:nowrap}
+.seg .snm{font-weight:600;font-size:13px;letter-spacing:-.2px;white-space:nowrap;
+  text-shadow:0 1px 6px rgba(0,0,0,.8)}
 .seg .snm.empty{color:var(--ink70);font-weight:300;background:rgba(11,12,10,.55);padding:1px 6px;border-radius:4px}
 .seg .skey{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--ink70);
-  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);
-  border-radius:4px;padding:2px 7px;white-space:nowrap}
-.seg.on .snm,.seg.on .skey{color:var(--olive)}
-.seg.on .skey{border-color:var(--olive45);background:rgba(219,221,161,.10)}
-.seg.hover .snm,.seg.hover .skey{color:var(--olive)}
-/* v24：有指向时未选中扇区压暗——"指向哪个"一眼可见 */
+  text-shadow:0 1px 6px rgba(0,0,0,.8);white-space:nowrap}
+/* v25 修复：激活标签反色——橄榄底 + 暗字（规格 A「标签反色」；原实现只剩橄榄色文字，无底色/反白） */
+.seg.on .snm,.seg.on .skey,.seg.hover .snm,.seg.hover .skey{
+  background:var(--olive);color:var(--bg);text-shadow:none;padding:1px 6px;border-radius:4px}
+/* v24：有指向时未选中扇区压暗——"指向哪个"一眼可见（v25：压到 .5，恢复走 transition 平滑） */
 .seg{transition:opacity .12s}
-.seg.dim{opacity:.35}
+.seg.dim{opacity:.5}
 /* v24：环心读数——当前指向的动作名（手势/悬停时显示） */
 .ring-readout{position:absolute;left:-130px;top:-36px;width:260px;text-align:center;pointer-events:none;z-index:3}
 .ring-readout .nm{font-weight:700;font-size:20px;letter-spacing:-.3px;color:var(--olive);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 2px 10px rgba(0,0,0,.65)}
 .ring-readout .ky{margin-top:5px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink70)}
-.selframe{position:absolute;inset:-6px -8px;border:2px solid rgba(255,255,255,.9);pointer-events:none}
-.sd{position:absolute;width:6px;height:6px;background:#fff}
-.sd.tl{left:-3px;top:-3px}
-.sd.tr{right:-3px;top:-3px}
-.sd.bl{left:-3px;bottom:-3px}
-.sd.br{right:-3px;bottom:-3px}
-.sd.tm{left:50%;top:-3px;transform:translateX(-50%)}
-.sd.bm{left:50%;bottom:-3px;transform:translateX(-50%)}
-.sd.lm{left:-3px;top:50%;transform:translateY(-50%)}
-.sd.rm{right:-3px;top:50%;transform:translateY(-50%)}
 
 /* ── 环工作室布局：左栏（标题+面板），环在右中 ── */
 .studio{position:absolute;inset:0;z-index:3}
@@ -212,7 +196,7 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
   backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
 .overlay .ringwrap{left:50%;top:50%}
 /* v23：滑入——环从光标处缩放+淡入浮现 */
-@keyframes ringin{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes ringin{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:var(--ring-op,1)}}
 .overlay .ringwrap{animation:ringin .22s cubic-bezier(.2,.9,.3,1.2)}
 /* v22.2：快捷环弹窗（body.popup）——背景全透明，只留环本体；环盘用不透明暗玻璃 */
 body.popup .overlay{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
