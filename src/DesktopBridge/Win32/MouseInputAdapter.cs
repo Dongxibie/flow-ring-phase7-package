@@ -51,6 +51,13 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         remove => _events.RawInputEmitted -= value;
     }
 
+    /// <summary>v23：触发键释放（长按释放=执行方向；快速点按=驻留菜单）。</summary>
+    public event EventHandler<InputReleasedEvent>? InputReleased
+    {
+        add => _events.InputReleased += value;
+        remove => _events.InputReleased -= value;
+    }
+
     public async Task InstallAsync(CancellationToken ct)
     {
         if (_hookHandle != nint.Zero)
@@ -140,9 +147,11 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         {
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 1:
                 OnButtonDown(NativeMethods.VK_XBUTTON1, raw.pt, raw.time);
+                EmitIntentAt(raw); // v23：侧键按下环即出现（不等 150ms）
                 return true; // 侧键保留给 Flow Ring
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 2:
                 OnButtonDown(NativeMethods.VK_XBUTTON2, raw.pt, raw.time);
+                EmitIntentAt(raw);
                 return true;
             case NativeMethods.WM_MBUTTONDOWN:
                 OnButtonDown(NativeMethods.VK_MBUTTON, raw.pt, raw.time);
@@ -185,24 +194,41 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
             return;
         }
 
-        // v22.2：侧键快速点按也算触发——此前必须长按 150ms，用户点按没反应
-        if (!_holdFired && _pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2)
+        // v23：释放事件——WasHold=true 长按释放（执行方向）；false 快速点按（驻留菜单）
+        if (_pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2
+            or NativeMethods.VK_MBUTTON or NativeMethods.VK_RBUTTON)
         {
-            var triggerType = MapButtonToTrigger(_pressedButtonVk);
-            if (triggerType != TriggerType.None)
-            {
-                var evt = new SpatialIntentEvent(
-                    triggerType,
-                    new RingPoint(_pressPoint.X, _pressPoint.Y),
-                    1.0f,
-                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    ModifierState.None);
-                _events.EmitIntent(evt);
-            }
+            _events.EmitReleased(new InputReleasedEvent(
+                _pressPoint.X,
+                _pressPoint.Y,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                _holdFired,
+                _pressedButtonVk));
         }
 
         _pressedButtonVk = 0;
         _lastReleaseAt = DateTimeOffset.UtcNow;
+    }
+
+    private void EmitIntentAt(NativeMethods.MSLLHOOKSTRUCT raw)
+    {
+        var triggerType = MapButtonToTrigger(_pressedButtonVk);
+        if (triggerType == TriggerType.None)
+        {
+            return;
+        }
+        // v23：侧键按下即标记已发意图（HoldDetect 循环不再对侧键重复发）
+        if (_pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2)
+        {
+            _holdFired = true;
+        }
+        var evt = new SpatialIntentEvent(
+            triggerType,
+            new RingPoint(raw.pt.X, raw.pt.Y),
+            1.0f,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ModifierState.None);
+        _events.EmitIntent(evt);
     }
 
     private async Task HoldDetectLoopAsync()
@@ -210,7 +236,8 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         var ct = _cts.Token;
         while (!ct.IsCancellationRequested)
         {
-            if (_pressedButtonVk != 0 && !_holdFired)
+            if (_pressedButtonVk != 0 && !_holdFired
+                && _pressedButtonVk is not (NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2))
             {
                 var elapsed = Environment.TickCount64 - _pressTimestampMs;
                 if (elapsed >= HoldThresholdMs)
@@ -258,8 +285,11 @@ internal sealed class InputAdapterEvents
 {
     public event EventHandler<SpatialIntentEvent>? IntentEmitted;
     public event EventHandler<RawInputEvent>? RawInputEmitted;
+    public event EventHandler<InputReleasedEvent>? InputReleased;
 
     public void EmitIntent(SpatialIntentEvent evt) => IntentEmitted?.Invoke(this, evt);
+
+    public void EmitReleased(InputReleasedEvent evt) => InputReleased?.Invoke(this, evt);
     public void EmitRawInputRaw(int x, int y, uint rawTime)
     {
         var ms = rawTime == 0 ? Environment.TickCount64 : rawTime;

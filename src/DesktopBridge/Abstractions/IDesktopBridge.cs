@@ -25,6 +25,9 @@ public interface IInputAdapter : IAsyncDisposable
     event EventHandler<SpatialIntentEvent>? IntentEmitted;
     event EventHandler<RawInputEvent>? RawInputEmitted;
 
+    /// <summary>v23：触发键释放（长按释放=执行方向；快速点按=驻留菜单）。</summary>
+    event EventHandler<InputReleasedEvent>? InputReleased;
+
     Task InstallAsync(CancellationToken ct);
     Task UninstallAsync(CancellationToken ct);
 }

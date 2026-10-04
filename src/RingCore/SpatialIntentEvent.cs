@@ -43,3 +43,14 @@ public readonly record struct SpatialIntentEvent(
 /// 原始鼠标输入事件，专供 UI mousemove 跟踪使用（不进入 RingCore 逻辑）。
 /// </summary>
 public readonly record struct RawInputEvent(int RawX, int RawY, long TimestampMs);
+
+/// <summary>
+/// v23：触发键释放事件。WasHold=true 表示长按释放（执行方向选择）；
+/// false 表示快速点按释放（进入驻留/菜单模式）。
+/// </summary>
+public readonly record struct InputReleasedEvent(
+    int RawX,
+    int RawY,
+    long TimestampMs,
+    bool WasHold,
+    int ButtonVk);

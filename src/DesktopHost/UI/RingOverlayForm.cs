@@ -104,11 +104,9 @@ public sealed class RingOverlayForm : Form
         Size = new Size(ringSizePx + margin * 2, ringSizePx + margin * 2);
 
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-        var x = Cursor.Position.X - Width / 2;
-        var y = Cursor.Position.Y - Height / 2;
-        x = Math.Max(area.Left, Math.Min(x, area.Right - Width));
-        y = Math.Max(area.Top, Math.Min(y, area.Bottom - Height));
-        Location = new Point(x, y);
+        var cx = Math.Max(area.Left + Width / 2, Math.Min(Cursor.Position.X, area.Right - Width / 2));
+        var cy = Math.Max(area.Top + Height / 2, Math.Min(Cursor.Position.Y, area.Bottom - Height / 2));
+        Location = new Point(cx - Width / 2, cy - Height / 2);
 
         TopMost = true;
         Show();
@@ -117,9 +115,51 @@ public sealed class RingOverlayForm : Form
         // v22.2：每次显示都让前端重新进入覆盖层模式（修复"只有第一次是圆环"）
         if (_contentReady)
         {
-            _webView.CoreWebView2?.PostWebMessageAsString("{\"type\":\"OVERLAY_ON\"}");
+            PostToPage("{\"type\":\"OVERLAY_ON\"}");
         }
         _logger.LogInformation("快捷环已显示（环径 {Size}px）@ 光标", ringSizePx);
+    }
+
+    /// <summary>
+    /// v23：跟随模式——环中心以 lerp 追光标（弹性跟手），返回光标相对环心的偏移。
+    /// 在 UI 线程调用。
+    /// </summary>
+    public (int Dx, int Dy) FollowCursor(int cursorX, int cursorY)
+    {
+        if (InvokeRequired)
+        {
+            // 跟随是高频调用，绝不能阻塞钩子线程：直接 BeginInvoke 并返回粗略偏移
+            _ = BeginInvoke(() => FollowCursor(cursorX, cursorY));
+            var a0 = Cursor.Position;
+            return (cursorX - a0.X, cursorY - a0.Y);
+        }
+
+        var half = Width / 2;
+        var centerX = Location.X + half;
+        var centerY = Location.Y + Height / 2;
+        var ncx = centerX + (int)((cursorX - centerX) * 0.42);
+        var ncy = centerY + (int)((cursorY - centerY) * 0.42);
+
+        var area = Screen.FromPoint(new Point(ncx, ncy)).WorkingArea;
+        ncx = Math.Max(area.Left + half, Math.Min(ncx, area.Right - half));
+        ncy = Math.Max(area.Top + Height / 2, Math.Min(ncy, area.Bottom - Height / 2));
+        Location = new Point(ncx - half, ncy - Height / 2);
+
+        return (cursorX - ncx, cursorY - ncy);
+    }
+
+    /// <summary>v23：向快捷环页面回发消息（OVERLAY_ON / FOLLOW / RELEASE_SELECT）。</summary>
+    public void PostToPage(string json)
+    {
+        if (InvokeRequired)
+        {
+            _ = BeginInvoke(() => PostToPage(json));
+            return;
+        }
+        if (_contentReady)
+        {
+            _webView.CoreWebView2?.PostWebMessageAsString(json);
+        }
     }
 
     public void HideRing()

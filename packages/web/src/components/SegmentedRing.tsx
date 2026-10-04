@@ -35,6 +35,7 @@ interface SegmentedRingProps {
   darkGlass?: boolean; // v22.2：弹窗模式下环盘用不透明暗玻璃（透明玻璃会被窗口色键挖掉）
   slots: Record<string, SegSlot>;
   selected: string | null;
+  hovered?: string | null; // v23：外部高亮方向（手势跟随）
   onSelect?: (dir: string) => void;
   onHover?: (dir: string | null) => void;
   nameOf: (ref: string) => string;
@@ -60,7 +61,7 @@ export function SegmentedRing(p: SegmentedRingProps): JSX.Element {
     : `rgba(255,255,255,${glassAlpha})`;
   const mask = ANNULUS(ri);
   const [hover, setHover] = useState<string | null>(null);
-  const lit = (dir: string): boolean => p.selected === dir || hover === dir;
+  const lit = (dir: string): boolean => p.selected === dir || hover === dir || p.hovered === dir;
 
   return (
     <div className="ringwrap">
