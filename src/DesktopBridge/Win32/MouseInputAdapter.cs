@@ -20,6 +20,7 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
 
     private readonly ILogger<MouseInputAdapter> _logger;
     private readonly InputAdapterEvents _events = new();
+    private readonly FullscreenDetector _fullscreen = new();
     private delegate nint HookProc(int nCode, nint wParam, nint lParam);
     private readonly HookProc _hookProcDelegate;
     private nint _hookHandle;
@@ -57,6 +58,9 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         add => _events.InputReleased += value;
         remove => _events.InputReleased -= value;
     }
+
+    /// <summary>暂停/全屏保护：为 true 时触发键完全放行（不吞键、不发意图）。</summary>
+    public bool IsSuspended { get; set; }
 
     public async Task InstallAsync(CancellationToken ct)
     {
@@ -146,29 +150,60 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         switch (msg)
         {
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 1:
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
+                }
                 OnButtonDown(NativeMethods.VK_XBUTTON1, raw.pt, raw.time);
                 EmitIntentAt(raw); // v23：侧键按下环即出现（不等 150ms）
                 return true; // 侧键保留给 Flow Ring
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 2:
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
+                }
                 OnButtonDown(NativeMethods.VK_XBUTTON2, raw.pt, raw.time);
                 EmitIntentAt(raw);
                 return true;
             case NativeMethods.WM_MBUTTONDOWN:
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
+                }
                 OnButtonDown(NativeMethods.VK_MBUTTON, raw.pt, raw.time);
                 return false;
             case NativeMethods.WM_RBUTTONDOWN:
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
+                }
                 OnButtonDown(NativeMethods.VK_RBUTTON, raw.pt, raw.time);
                 return false;
 
             case NativeMethods.WM_XBUTTONUP when _pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2:
-                OnButtonUp();
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    ClearPressState(); // 暂停/全屏保护：清掉按压残留，避免解除后补发意图或下一次点按被误判
+                    return false; // 完全放行（不吞键、不发意图）
+                }
+                OnButtonUp(raw.pt);
                 return true;
             case NativeMethods.WM_MBUTTONUP when _pressedButtonVk == NativeMethods.VK_MBUTTON:
-                OnButtonUp();
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    ClearPressState(); // 暂停/全屏保护：清掉按压残留，避免解除后补发意图或下一次点按被误判
+                    return false; // 完全放行（不吞键、不发意图）
+                }
+                OnButtonUp(raw.pt);
                 return false;
             case NativeMethods.WM_RBUTTONUP when _pressedButtonVk == NativeMethods.VK_RBUTTON:
+                if (IsSuspended || _fullscreen.IsFullscreenForeground())
+                {
+                    ClearPressState(); // 暂停/全屏保护：清掉按压残留（含 _holdFired），避免下一次右键抬起被误吞
+                    return false; // 完全放行（不吞键、不发意图）
+                }
                 var swallowUp = _holdFired; // 长按已触发：吞掉抬起，防右键菜单
-                OnButtonUp();
+                OnButtonUp(raw.pt);
                 return swallowUp;
         }
 
@@ -187,27 +222,37 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         _holdFired = false;
     }
 
-    private void OnButtonUp()
+    private void OnButtonUp(NativeMethods.POINT releasePt)
     {
         if (_pressedButtonVk == 0)
         {
             return;
         }
 
-        // v23：释放事件——WasHold=true 长按释放（执行方向）；false 快速点按（驻留菜单）
+        // v23：释放事件——WasHold 由按压时长判定（≥150ms 为长按，执行方向选择；否则快速点按=驻留菜单）。
+        // _holdFired 仅表示是否已发过意图（侧键按下即置 true），不再作为长按依据。
         if (_pressedButtonVk is NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2
             or NativeMethods.VK_MBUTTON or NativeMethods.VK_RBUTTON)
         {
+            var wasHold = Environment.TickCount64 - _pressTimestampMs >= HoldThresholdMs;
             _events.EmitReleased(new InputReleasedEvent(
-                _pressPoint.X,
-                _pressPoint.Y,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                _holdFired,
+                releasePt.X,
+                releasePt.Y,
+                Environment.TickCount64,
+                wasHold,
                 _pressedButtonVk));
         }
 
         _pressedButtonVk = 0;
         _lastReleaseAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>清空当前按压状态，且不派发释放事件（暂停/全屏保护放行时使用）。</summary>
+    private void ClearPressState()
+    {
+        _pressedButtonVk = 0;
+        _pressTimestampMs = 0;
+        _holdFired = false;
     }
 
     private void EmitIntentAt(NativeMethods.MSLLHOOKSTRUCT raw)
@@ -240,7 +285,10 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
                 && _pressedButtonVk is not (NativeMethods.VK_XBUTTON1 or NativeMethods.VK_XBUTTON2))
             {
                 var elapsed = Environment.TickCount64 - _pressTimestampMs;
-                if (elapsed >= HoldThresholdMs)
+                // 暂停/全屏保护：跳过本轮，不创建意图（保持 _holdFired=false，解除后可重试）
+                if (elapsed >= HoldThresholdMs
+                    && !IsSuspended
+                    && !_fullscreen.IsFullscreenForeground())
                 {
                     var triggerType = MapButtonToTrigger(_pressedButtonVk);
                     if (triggerType != TriggerType.None)

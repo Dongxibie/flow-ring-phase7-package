@@ -45,12 +45,13 @@ public readonly record struct SpatialIntentEvent(
 public readonly record struct RawInputEvent(int RawX, int RawY, long TimestampMs);
 
 /// <summary>
-/// v23：触发键释放事件。WasHold=true 表示长按释放（执行方向选择）；
-/// false 表示快速点按释放（进入驻留/菜单模式）。
+/// v23：触发键释放事件，携带松开点坐标（ReleaseX/ReleaseY）。
+/// WasHold=true 表示长按释放（执行方向选择）；false 表示快速点按释放（进入驻留/菜单模式）。
+/// 长按判定 = 释放时长 ≥ 150ms（见 MouseInputAdapter）。
 /// </summary>
 public readonly record struct InputReleasedEvent(
-    int RawX,
-    int RawY,
+    int ReleaseX,
+    int ReleaseY,
     long TimestampMs,
     bool WasHold,
     int ButtonVk);
