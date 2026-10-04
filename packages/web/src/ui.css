@@ -143,10 +143,12 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
 .rg{position:absolute;inset:0;border-radius:50%}
 .rg-glass{backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
   box-shadow:0 14px 34px rgba(0,0,0,.35)}
-.rg-active{background:rgba(219,221,161,.16)}
+.rg-active{background:rgba(219,221,161,.24)}
 .rg-rim{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.16);pointer-events:none}
 .rg-rim-in{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.12);pointer-events:none}
 .wedge{position:absolute;inset:0;cursor:pointer}
+/* v24：中心守卫圈——挡住内圈的误悬停/误点击（透明，不挡视觉） */
+.ring-center-guard{position:absolute;border-radius:50%;background:transparent;pointer-events:auto}
 .spoke{position:absolute;width:2px;border-radius:1px;background:rgba(255,255,255,.32);pointer-events:none}
 .spoke.mid{background:rgba(255,255,255,.13);width:1px}
 .core{position:absolute;left:-28px;top:-28px;width:56px;height:56px;border-radius:50%;
@@ -166,6 +168,13 @@ input[type=range].rng::-webkit-slider-thumb{-webkit-appearance:none;appearance:n
 .seg.on .snm,.seg.on .skey{color:var(--olive)}
 .seg.on .skey{border-color:var(--olive45);background:rgba(219,221,161,.10)}
 .seg.hover .snm,.seg.hover .skey{color:var(--olive)}
+/* v24：有指向时未选中扇区压暗——"指向哪个"一眼可见 */
+.seg{transition:opacity .12s}
+.seg.dim{opacity:.35}
+/* v24：环心读数——当前指向的动作名（手势/悬停时显示） */
+.ring-readout{position:absolute;left:-130px;top:-36px;width:260px;text-align:center;pointer-events:none;z-index:3}
+.ring-readout .nm{font-weight:700;font-size:20px;letter-spacing:-.3px;color:var(--olive);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 2px 10px rgba(0,0,0,.65)}
+.ring-readout .ky{margin-top:5px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink70)}
 .selframe{position:absolute;inset:-6px -8px;border:2px solid rgba(255,255,255,.9);pointer-events:none}
 .sd{position:absolute;width:6px;height:6px;background:#fff}
 .sd.tl{left:-3px;top:-3px}

@@ -10,8 +10,9 @@ namespace FlowRing.DesktopHost.UI;
 /// v22.2：快捷环弹窗——"只有环本体"的透明浮层。
 /// WebView2 背景透明 + 窗体色键（TransparencyKey）挖掉环以外的一切：
 /// 看得穿、点得穿，视野里只有圆环本身（修复"很大一坨方块占视野"）。
-/// 位置跟随光标（环中心=光标，夹在屏幕工作区内）；尺寸随设置实时变化。
-/// 每次显示前回发 OVERLAY_ON，前端重新进入覆盖层模式（修复"只有一次是圆环"）。
+/// v24：环在按下点【固定】显示（不再跟随光标，光标从环心向外拖=选择方向）；
+/// 窗口尺寸按 DPI 缩放换算（修复环被窗口裁切、右侧标注被截一半）；
+/// 非激活浮层（WS_EX_NOACTIVATE，绝不抢焦点、不打断前台应用）；每次显示前回发 OVERLAY_ON。
 /// </summary>
 public sealed class RingOverlayForm : Form
 {
@@ -72,15 +73,21 @@ public sealed class RingOverlayForm : Form
             _contentReady = true;
             _logger.LogInformation("快捷环 WebView2 已就绪并导航到 #overlay（dist={Dist}）", _frontendDist);
         };
+    }
 
-        Deactivate += (_, _) =>
+    /// <summary>v24：非激活浮层——Show() 不抢焦点，绝不打断前台应用（键盘类动作才能落到目标应用）。</summary>
+    protected override bool ShowWithoutActivation => true;
+
+    /// <summary>v24：WS_EX_NOACTIVATE（不抢焦点）+ WS_EX_TOOLWINDOW（不进 Alt-Tab）。</summary>
+    protected override CreateParams CreateParams
+    {
+        get
         {
-            // 点击窗外即关闭（与覆盖层"点空白关闭"一致）
-            if (Visible)
-            {
-                HideRing();
-            }
-        };
+            var cp = base.CreateParams;
+            cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
+            cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW
+            return cp;
+        }
     }
 
     /// <summary>预加载：创建句柄 + 初始化 WebView2。在 UI 线程调用一次。</summary>
@@ -97,17 +104,25 @@ public sealed class RingOverlayForm : Form
         }
     }
 
-    /// <summary>在光标处显示环（环中心=光标，夹在屏幕工作区内）。任意线程可调。</summary>
-    public void ShowRing(int ringSizePx)
+    /// <summary>
+    /// v24：在光标处显示环并【固定】在那里（不再跟随光标）。
+    /// 返回环心（屏幕物理像素坐标）——宿主以它为方向判定与高亮偏移的原点。
+    /// 环整体夹取在屏幕工作区内，保证完整可见；窗口尺寸 = (环径+留白) × DPI 缩放（CSS px → 物理像素）。
+    /// 任意线程可调（实际都在 UI 线程）。
+    /// </summary>
+    public Point ShowRing(int ringSizePx)
     {
         if (InvokeRequired)
         {
+            var fallback = Cursor.Position;
             _ = BeginInvoke(() => ShowRing(ringSizePx));
-            return;
+            return fallback;
         }
 
         var margin = 44;
-        Size = new Size(ringSizePx + margin * 2, ringSizePx + margin * 2);
+        var scale = DeviceDpi > 0 ? DeviceDpi / 96.0 : 1.0;
+        var win = (int)Math.Round((ringSizePx + margin * 2) * scale);
+        Size = new Size(win, win);
 
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
         var cx = Math.Max(area.Left + Width / 2, Math.Min(Cursor.Position.X, area.Right - Width / 2));
@@ -115,46 +130,18 @@ public sealed class RingOverlayForm : Form
         Location = new Point(cx - Width / 2, cy - Height / 2);
 
         TopMost = true;
-        Show();
-        Activate();
+        Show(); // v24：不调 Activate()——非激活浮层
 
         // v22.2：每次显示都让前端重新进入覆盖层模式（修复"只有第一次是圆环"）
         if (_contentReady)
         {
             PostToPage("{\"type\":\"OVERLAY_ON\"}");
         }
-        _logger.LogInformation("快捷环已显示（环径 {Size}px）@ 光标", ringSizePx);
+        _logger.LogInformation("快捷环已显示（环径 {Size}px，窗口 {Win}px）@ ({X},{Y})", ringSizePx, win, cx, cy);
+        return new Point(cx, cy);
     }
 
-    /// <summary>
-    /// v23：跟随模式——环中心以 lerp 追光标（弹性跟手），返回光标相对环心的偏移。
-    /// 在 UI 线程调用。
-    /// </summary>
-    public (int Dx, int Dy) FollowCursor(int cursorX, int cursorY)
-    {
-        if (InvokeRequired)
-        {
-            // 跟随是高频调用，绝不能阻塞钩子线程：直接 BeginInvoke 并返回粗略偏移
-            _ = BeginInvoke(() => FollowCursor(cursorX, cursorY));
-            var a0 = Cursor.Position;
-            return (cursorX - a0.X, cursorY - a0.Y);
-        }
-
-        var half = Width / 2;
-        var centerX = Location.X + half;
-        var centerY = Location.Y + Height / 2;
-        var ncx = centerX + (int)((cursorX - centerX) * 0.42);
-        var ncy = centerY + (int)((cursorY - centerY) * 0.42);
-
-        var area = Screen.FromPoint(new Point(ncx, ncy)).WorkingArea;
-        ncx = Math.Max(area.Left + half, Math.Min(ncx, area.Right - half));
-        ncy = Math.Max(area.Top + Height / 2, Math.Min(ncy, area.Bottom - Height / 2));
-        Location = new Point(ncx - half, ncy - Height / 2);
-
-        return (cursorX - ncx, cursorY - ncy);
-    }
-
-    /// <summary>v23：向快捷环页面回发消息（OVERLAY_ON / FOLLOW / RELEASE_SELECT）。</summary>
+    /// <summary>v23：向快捷环页面回发消息（OVERLAY_ON / FOLLOW / RELEASE_SELECT / OVERLAY_CLOSE）。</summary>
     public void PostToPage(string json)
     {
         if (InvokeRequired)

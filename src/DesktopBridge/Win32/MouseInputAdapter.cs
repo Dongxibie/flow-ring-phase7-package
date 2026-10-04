@@ -23,7 +23,9 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
     private readonly FullscreenDetector _fullscreen = new();
     private delegate nint HookProc(int nCode, nint wParam, nint lParam);
     private readonly HookProc _hookProcDelegate;
+    private readonly HookProc _keyboardHookProcDelegate;
     private nint _hookHandle;
+    private nint _keyboardHookHandle;
     private nint _moduleHandle;
     private readonly CancellationTokenSource _cts = new();
 
@@ -38,6 +40,7 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
     {
         _logger = logger;
         _hookProcDelegate = HookCallback;
+        _keyboardHookProcDelegate = KeyboardHookCallback;
     }
 
     public event EventHandler<SpatialIntentEvent>? IntentEmitted
@@ -57,6 +60,20 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
     {
         add => _events.InputReleased += value;
         remove => _events.InputReleased -= value;
+    }
+
+    /// <summary>v24：任意鼠标按钮按下（左/右键），用于"点击环外关闭"判定；不吞键。</summary>
+    public event EventHandler<RawButtonEvent>? RawButtonDown
+    {
+        add => _events.RawButtonDown += value;
+        remove => _events.RawButtonDown -= value;
+    }
+
+    /// <summary>v24：全局 ESC 按下（环显示期间宿主据此关闭覆盖层）。钩子永远放行 ESC。</summary>
+    public event EventHandler? EscapePressed
+    {
+        add => _events.EscapePressed += value;
+        remove => _events.EscapePressed -= value;
     }
 
     /// <summary>暂停/全屏保护：为 true 时触发键完全放行（不吞键、不发意图）。</summary>
@@ -84,6 +101,22 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
 
         _logger.LogInformation("WH_MOUSE_LL Hook 已安装 (handle=0x{Handle:X})", _hookHandle);
 
+        // v24：低级键盘钩子——只为捕获 ESC（环显示时关闭覆盖层），永远 CallNextHookEx 不吞键
+        _keyboardHookHandle = NativeMethods.SetWindowsHookExW(
+            NativeMethods.WH_KEYBOARD_LL,
+            Marshal.GetFunctionPointerForDelegate(_keyboardHookProcDelegate),
+            _moduleHandle,
+            0);
+        if (_keyboardHookHandle == nint.Zero)
+        {
+            var kbError = Marshal.GetLastWin32Error();
+            _logger.LogWarning("WH_KEYBOARD_LL Hook 安装失败({Error})：ESC 关闭退化为仅页面内生效", kbError);
+        }
+        else
+        {
+            _logger.LogInformation("WH_KEYBOARD_LL Hook 已安装 (handle=0x{Handle:X})", _keyboardHookHandle);
+        }
+
         // HoldDetect 后台循环
         _ = Task.Run(HoldDetectLoopAsync, _cts.Token);
 
@@ -99,6 +132,11 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
 
         NativeMethods.UnhookWindowsHookEx(_hookHandle);
         _hookHandle = nint.Zero;
+        if (_keyboardHookHandle != nint.Zero)
+        {
+            NativeMethods.UnhookWindowsHookEx(_keyboardHookHandle);
+            _keyboardHookHandle = nint.Zero;
+        }
         _logger.LogInformation("WH_MOUSE_LL Hook 已卸载");
         await Task.CompletedTask;
     }
@@ -115,6 +153,11 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         {
             NativeMethods.UnhookWindowsHookEx(_hookHandle);
             _hookHandle = nint.Zero;
+        }
+        if (_keyboardHookHandle != nint.Zero)
+        {
+            NativeMethods.UnhookWindowsHookEx(_keyboardHookHandle);
+            _keyboardHookHandle = nint.Zero;
         }
         _cts.Cancel();
         _cts.Dispose();
@@ -139,6 +182,32 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         return swallow ? 1 : NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
     }
 
+    /// <summary>v24：低级键盘钩子回调——只上报 ESC 按下，永远放行（绝不吞键）。</summary>
+    private nint KeyboardHookCallback(int nCode, nint wParam, nint lParam)
+    {
+        try
+        {
+            if (nCode >= 0)
+            {
+                var msg = (int)wParam;
+                if (msg == NativeMethods.WM_KEYDOWN || msg == NativeMethods.WM_SYSKEYDOWN)
+                {
+                    var kb = Marshal.PtrToStructure<NativeMethods.KBDLLHOOKSTRUCT>(lParam);
+                    if (kb.vkCode == NativeMethods.VK_ESCAPE)
+                    {
+                        _events.EmitEscape();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "键盘钩子回调异常");
+        }
+        // ESC 永远放行：其他应用/游戏的 ESC 行为不受影响
+        return NativeMethods.CallNextHookEx(_keyboardHookHandle, nCode, wParam, lParam);
+    }
+
     /// <returns>true = 吞掉该事件，不传给底层应用。</returns>
     private bool ProcessMouseMessage(nint wParam, nint lParam)
     {
@@ -149,9 +218,14 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
 
         switch (msg)
         {
+            case NativeMethods.WM_LBUTTONDOWN:
+                // v24：左键按下——"点击环外关闭"判定用；不吞键
+                _events.EmitRawButton(raw.pt.X, raw.pt.Y, false);
+                return false;
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 1:
                 if (IsSuspended || _fullscreen.IsFullscreenForeground())
                 {
+                    LogSuppressedTriggerIfFullscreen();
                     return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
                 }
                 OnButtonDown(NativeMethods.VK_XBUTTON1, raw.pt, raw.time);
@@ -160,6 +234,7 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
             case NativeMethods.WM_XBUTTONDOWN when (raw.mouseData >> 16) == 2:
                 if (IsSuspended || _fullscreen.IsFullscreenForeground())
                 {
+                    LogSuppressedTriggerIfFullscreen();
                     return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
                 }
                 OnButtonDown(NativeMethods.VK_XBUTTON2, raw.pt, raw.time);
@@ -173,6 +248,7 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
                 OnButtonDown(NativeMethods.VK_MBUTTON, raw.pt, raw.time);
                 return false;
             case NativeMethods.WM_RBUTTONDOWN:
+                _events.EmitRawButton(raw.pt.X, raw.pt.Y, true); // v24：右键按下（环外关闭判定用）
                 if (IsSuspended || _fullscreen.IsFullscreenForeground())
                 {
                     return false; // 暂停/全屏保护：完全放行（不吞键、不发意图）
@@ -255,6 +331,15 @@ public sealed class MouseInputAdapter : IInputAdapter, IDisposable
         _holdFired = false;
     }
 
+    /// <summary>v24：触发被全屏保护吞掉时留下一行可诊断日志（只记侧键，避免游戏内点击刷屏）。</summary>
+    private void LogSuppressedTriggerIfFullscreen()
+    {
+        if (!IsSuspended && _fullscreen.IsFullscreenForeground())
+        {
+            _logger.LogInformation("全屏保护：放行触发键（前台为全屏应用/窗口）");
+        }
+    }
+
     private void EmitIntentAt(NativeMethods.MSLLHOOKSTRUCT raw)
     {
         var triggerType = MapButtonToTrigger(_pressedButtonVk);
@@ -334,10 +419,16 @@ internal sealed class InputAdapterEvents
     public event EventHandler<SpatialIntentEvent>? IntentEmitted;
     public event EventHandler<RawInputEvent>? RawInputEmitted;
     public event EventHandler<InputReleasedEvent>? InputReleased;
+    public event EventHandler<RawButtonEvent>? RawButtonDown;
+    public event EventHandler? EscapePressed;
 
     public void EmitIntent(SpatialIntentEvent evt) => IntentEmitted?.Invoke(this, evt);
 
     public void EmitReleased(InputReleasedEvent evt) => InputReleased?.Invoke(this, evt);
+
+    public void EmitRawButton(int x, int y, bool isRight) => RawButtonDown?.Invoke(this, new RawButtonEvent(x, y, isRight));
+
+    public void EmitEscape() => EscapePressed?.Invoke(this, EventArgs.Empty);
     public void EmitRawInputRaw(int x, int y, uint rawTime)
     {
         var ms = rawTime == 0 ? Environment.TickCount64 : rawTime;
