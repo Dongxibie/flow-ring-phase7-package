@@ -13,6 +13,8 @@ declare global {
       webview?: {
         postMessage(json: string): void;
         addEventListener(event: 'message', handler: (e: { data: string }) => void): void;
+        // v23.1：WebView2 的宿主消息只走这里，hostLink.onHostMessage 需要在卸载时退订
+        removeEventListener?(event: 'message', handler: (e: { data: string }) => void): void;
       };
     };
   }
@@ -46,12 +48,15 @@ export function useBridge(): BridgeApi {
       return;
     }
     const wv2 = window.chrome.webview;
+    // handlersRef.current 是 useRef 初始化时创建的同一个 Set（全程不重新赋值），
+    // 取出稳定引用供监听回调与 cleanup 共用，避免 cleanup 读取「变化后」的 ref。
+    const handlers = handlersRef.current;
     const onMsg = (e: { data: string }) => {
-      handlersRef.current.forEach((h: (data: string) => void) => h(e.data));
+      handlers.forEach((h: (data: string) => void) => h(e.data));
     };
     wv2.addEventListener('message', onMsg);
     return () => {
-      handlersRef.current.clear();
+      handlers.clear();
     };
   }, [inWv2]);
 
